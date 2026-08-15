@@ -22,9 +22,10 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
 
 # Subject constants
-SUBJECT_PACKETS = "cxp.packets"          # broadcast new packets
-SUBJECT_RESULTS = "cxp.results"          # completed / failed packets
-SUBJECT_DASHBOARD = "cxp.dashboard"      # status events for the dashboard
+SUBJECT_PACKETS   = "cxp.packets"    # broadcast new packets
+SUBJECT_RESULTS   = "cxp.results"    # completed / failed packets
+SUBJECT_DASHBOARD = "cxp.dashboard"  # status events for the dashboard
+SUBJECT_THINKING  = "cxp.thinking"   # agent reasoning stream (prompts, responses, steps)
 
 
 class AgentShell(ABC):
@@ -72,15 +73,19 @@ class AgentShell(ABC):
             await self._emit_status("working", packet)
 
             try:
+                await self._think(f"▶ TASK: {packet.payload.goal}")
+                await self._think(f"  cap={packet.capability}  id={packet.id[:8]}")
                 output = await self._execute(packet)
                 packet.complete(self.agent_id, output)
                 self._memory.record_success(self.agent_id, packet.capability)
                 await self._memory.save()
+                await self._think(f"✓ DONE: {packet.id[:8]} — output {len(output)} chars")
                 log.info("[%s] ✓ packet %s", self.agent_id, packet.id[:8])
             except Exception as exc:
                 packet.fail(self.agent_id, str(exc))
                 self._memory.record_failure(self.agent_id, packet.capability)
                 await self._memory.save()
+                await self._think(f"✗ ERROR: {packet.id[:8]} — {exc}")
                 log.error("[%s] ✗ packet %s: %s", self.agent_id, packet.id[:8], exc)
 
             await self._publish(SUBJECT_RESULTS, packet)
@@ -123,21 +128,49 @@ class AgentShell(ABC):
         }
         await self._nc.publish(SUBJECT_DASHBOARD, json.dumps(payload).encode())
 
+    async def _think(self, text: str) -> None:
+        """Publish a thinking/reasoning event to the dashboard."""
+        payload = json.dumps({"agent": self.agent_id, "text": text}).encode()
+        await self._nc.publish(SUBJECT_THINKING, payload)
+
     async def llm(self, system: str, user: str) -> str:
-        """Call the local Ollama LLM and return the response text."""
+        """Call Ollama with streaming, publishing each token chunk to NATS."""
         import httpx
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
+        await self._think(f"  ⟳ LLM prompt ({len(user)} chars): {user[:120]}…")
+        chunks: list[str] = []
+
+        async with httpx.AsyncClient(timeout=180) as client:
+            async with client.stream(
+                "POST",
                 f"{OLLAMA_URL}/api/chat",
                 json={
                     "model": OLLAMA_MODEL,
-                    "stream": False,
+                    "stream": True,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
                 },
-            )
-            resp.raise_for_status()
-            return resp.json()["message"]["content"]
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            chunks.append(token)
+                            # Publish every ~20 chars so dashboard sees typing
+                            if sum(len(c) for c in chunks) % 20 == 0:
+                                await self._nc.publish(
+                                    SUBJECT_THINKING,
+                                    json.dumps({"agent": self.agent_id, "text": token, "stream": True}).encode()
+                                )
+                    except Exception:
+                        continue
+
+        full = "".join(chunks)
+        await self._think(f"  ✓ LLM response ({len(full)} chars): {full[:120]}…")
+        return full

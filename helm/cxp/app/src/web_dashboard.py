@@ -141,6 +141,9 @@ button:hover { background: #0f0; color: #000; }
 .submit-row { display: flex; gap: 8px; align-items: center; }
 #submit-status { color: #888; font-size: 11px; min-width: 120px; }
 tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
+.resizable { resize: vertical; overflow: auto; min-height: 80px; }
+.drag-handle { height: 4px; background: #1a6600; cursor: ns-resize; margin: 2px 0; }
+.drag-handle:hover { background: #0f0; }
 </style>
 </head>
 <body>
@@ -173,24 +176,25 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
   </div>
 </div>
 
-<div class="row" style="height:200px">
-  <div class="panel" style="flex:1.5;display:flex;flex-direction:column">
+<div class="row" style="height:200px" id="mid-row">
+  <div class="panel resizable" style="flex:1.5;display:flex;flex-direction:column" id="pkt-panel">
     <div class="panel-title">Packets — click row to view output</div>
     <div class="scroll" style="flex:1">
       <table><thead><tr><th>ID</th><th>Type</th><th>Cap</th><th>Status</th><th>Score</th><th>Goal</th></tr></thead>
       <tbody id="pkts"></tbody></table>
     </div>
   </div>
-  <div class="panel" style="flex:1;display:flex;flex-direction:column">
+  <div class="panel resizable" style="flex:1;display:flex;flex-direction:column" id="think-panel">
     <div class="panel-title">Agent Thinking / LLM Stream</div>
     <div class="scroll" id="thinking" style="flex:1"></div>
   </div>
 </div>
 
-<div class="panel">
+<div class="drag-handle" id="output-drag"></div>
+<div class="panel" id="output-wrap">
   <div class="panel-title">Output — <span id="out-goal" class="y"></span></div>
-  <div class="scroll" style="max-height:320px">
-    <pre id="out-content">Type a task above and press Enter. Output appears here when complete.</pre>
+  <div class="scroll resizable" style="max-height:320px" id="out-wrap">
+    <pre id="out-content">Click a completed packet above to see its output.</pre>
   </div>
 </div>
 
@@ -252,9 +256,9 @@ async function refresh() {
     </tr>`;
   }).join('');
 
-  // Auto-show latest completed output if user hasn't clicked
-  const done = data.packets.filter(p=>p.type==='code'&&p.status==='done'&&p.output).pop();
-  if (done && document.getElementById('out-content').textContent.startsWith('⟳')) showOutput(done.id);
+  // Auto-show latest completed output (any type with output)
+  const done = data.packets.filter(p=>p.status==='done'&&p.output).pop();
+  if (done && (document.getElementById('out-content').textContent.startsWith('Click')||document.getElementById('out-content').textContent.startsWith('⟳'))) showOutput(done.id);
 
   // Thinking stream
   const el = document.getElementById('thinking');
@@ -271,6 +275,37 @@ async function refresh() {
   });
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
+
+// Drag to resize output panel
+(function(){
+  const handle = document.getElementById('output-drag');
+  if (!handle) return;
+  let dragging = false, startY, startH;
+  handle.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY;
+    startH = document.getElementById('out-wrap').offsetHeight;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    document.getElementById('out-wrap').style.maxHeight = Math.max(80, startH + e.clientY - startY) + 'px';
+  });
+  document.addEventListener('mouseup', () => dragging = false);
+
+  // Drag to resize mid row (packets/thinking height)
+  const mid = document.getElementById('mid-row');
+  let mDrag = false, mStartY, mStartH;
+  mid.addEventListener('mousedown', e => {
+    if (e.target.tagName === 'DIV' && e.offsetY > mid.offsetHeight - 8) {
+      mDrag = true; mStartY = e.clientY; mStartH = mid.offsetHeight; e.preventDefault();
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (!mDrag) return;
+    mid.style.height = Math.max(100, mStartH + e.clientY - mStartY) + 'px';
+  });
+  document.addEventListener('mouseup', () => mDrag = false);
+})();
 
 setInterval(refresh, 2000);
 refresh();

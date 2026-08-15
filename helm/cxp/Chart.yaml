@@ -1,0 +1,14 @@
+apiVersion: v2
+name: cxp
+description: Context Exchange Protocol — distributed cognitive swarm
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: nats
+    version: "1.2.4"
+    repository: "https://nats-io.github.io/k8s/helm/charts/"
+  - name: ollama
+    version: "0.59.0"
+    repository: "https://otwld.github.io/ollama-helm/"

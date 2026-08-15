@@ -1,0 +1,9 @@
+dependencies:
+- name: nats
+  repository: https://nats-io.github.io/k8s/helm/charts/
+  version: 1.2.4
+- name: ollama
+  repository: https://otwld.github.io/ollama-helm/
+  version: 0.59.0
+digest: sha256:fe620ad07ddd1b4cab0bbe9547c73fb34ea97d15423f71f693a529fae1b56784
+generated: "2026-08-15T13:01:18.473222-05:00"

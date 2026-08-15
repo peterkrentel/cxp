@@ -1,0 +1,73 @@
+{{- range $name, $cfg := .Values.agents }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "cxp-%s" $name }}
+  labels:
+    app.kubernetes.io/name: cxp
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels:
+      app: {{ printf "cxp-%s" $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ printf "cxp-%s" $name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: assemble
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cp /cm/root/main.py /app/main.py
+              cp /cm/root/requirements.txt /app/requirements.txt
+              mkdir -p /app/src/agents
+              cp /cm/src/*.py /app/src/
+              cp /cm/agents/*.py /app/src/agents/
+              pip install --quiet --target /app/packages -r /app/requirements.txt
+              cp /cm/skills/* /skills/
+          volumeMounts:
+            - { name: app,       mountPath: /app }
+            - { name: skills,    mountPath: /skills }
+            - { name: cm-root,   mountPath: /cm/root }
+            - { name: cm-src,    mountPath: /cm/src }
+            - { name: cm-agents, mountPath: /cm/agents }
+            - { name: cm-skills, mountPath: /cm/skills }
+      containers:
+        - name: agent
+          image: python:3.12-slim
+          command: ["python", "/app/main.py"]
+          args: ["{{ if eq $cfg.role "dashboard" }}idle{{ else }}{{ $cfg.role }}{{ end }}"]
+          env:
+            - { name: NATS_URL,       value: "{{ $.Values.natsUrl }}" }
+            - { name: OLLAMA_URL,     value: "{{ $.Values.ollamaUrl }}" }
+            - { name: OLLAMA_MODEL,   value: "{{ $.Values.ollamaModel }}" }
+            - { name: CXP_SKILLS_DIR, value: /skills }
+            - { name: CXP_MEMORY_PATH,value: /data/memory.json }
+            - { name: PYTHONPATH,     value: /app/packages }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - { name: app,    mountPath: /app }
+            - { name: skills, mountPath: /skills }
+            - { name: memory, mountPath: /data }
+      volumes:
+        - { name: app,       emptyDir: {} }
+        - { name: skills,    emptyDir: {} }
+        - { name: cm-root,   configMap: { name: cxp-app-root } }
+        - { name: cm-src,    configMap: { name: cxp-app-src } }
+        - { name: cm-agents, configMap: { name: cxp-app-agents } }
+        - { name: cm-skills, configMap: { name: "{{ $.Values.skillsConfigMap }}" } }
+        - { name: memory,    persistentVolumeClaim: { claimName: cxp-memory } }
+{{- end }}

@@ -1,0 +1,43 @@
+{{- $root := . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cxp-app-root
+data:
+  requirements.txt: |
+{{ .Files.Get "app/requirements.txt" | indent 4 }}
+  main.py: |
+{{ .Files.Get "app/main.py" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cxp-app-src
+data:
+  __init__.py: |
+{{ .Files.Get "app/src/__init__.py" | indent 4 }}
+  packet.py: |
+{{ .Files.Get "app/src/packet.py" | indent 4 }}
+  agent_shell.py: |
+{{ .Files.Get "app/src/agent_shell.py" | indent 4 }}
+  memory.py: |
+{{ .Files.Get "app/src/memory.py" | indent 4 }}
+  dashboard.py: |
+{{ .Files.Get "app/src/dashboard.py" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cxp-app-agents
+data:
+  __init__.py: |
+{{ .Files.Get "app/src/agents/__init__.py" | indent 4 }}
+  planner.py: |
+{{ .Files.Get "app/src/agents/planner.py" | indent 4 }}
+  executor.py: |
+{{ .Files.Get "app/src/agents/executor.py" | indent 4 }}
+  verifier.py: |
+{{ .Files.Get "app/src/agents/verifier.py" | indent 4 }}
+  reflect.py: |
+{{ .Files.Get "app/src/agents/reflect.py" | indent 4 }}

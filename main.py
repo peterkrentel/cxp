@@ -1,0 +1,69 @@
+"""Entry points: run an agent role or the dashboard."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+
+
+def main() -> None:
+    role = sys.argv[1] if len(sys.argv) > 1 else "dashboard"
+
+    if role == "planner":
+        from src.agents.planner import PlannerAgent
+        asyncio.run(PlannerAgent().run())
+
+    elif role == "executor":
+        from src.agents.executor import ExecutorAgent
+        asyncio.run(ExecutorAgent().run())
+
+    elif role == "verifier":
+        from src.agents.verifier import VerifierAgent
+        asyncio.run(VerifierAgent().run())
+
+    elif role == "reflect":
+        from src.agents.reflect import ReflectAgent
+        asyncio.run(ReflectAgent().run())
+
+    elif role == "dashboard":
+        from src.dashboard import Dashboard
+        asyncio.run(Dashboard().run())
+
+    elif role == "idle":
+        # keeps the pod alive so you can exec in and run the dashboard manually
+        import time
+        while True:
+            time.sleep(3600)
+
+    elif role == "submit":
+        # submit a task from the CLI: python main.py submit "your goal here"
+        goal = " ".join(sys.argv[2:]) or "scaffold a Redis StatefulSet for Kubernetes with persistence"
+        asyncio.run(_submit_task(goal))
+
+    else:
+        print(f"Unknown role: {role}")
+        print("Usage: python main.py [planner|executor|verifier|reflect|dashboard|submit <goal>]")
+        sys.exit(1)
+
+
+async def _submit_task(goal: str) -> None:
+    import nats
+    from src.agent_shell import NATS_URL, SUBJECT_PACKETS
+    from src.packet import CXPPacket, PacketType, Payload
+
+    nc = await nats.connect(NATS_URL)
+    packet = CXPPacket(
+        origin="human",
+        type=PacketType.PLAN,
+        capability="plan",
+        priority=3,
+        payload=Payload(goal=goal),
+    )
+    packet.append_trace("human", "created", "submitted via CLI")
+    await nc.publish(SUBJECT_PACKETS, packet.model_dump_json().encode())
+    await nc.drain()
+    print(f"Task submitted: {packet.task_id[:8]}  goal='{goal}'")
+
+
+if __name__ == "__main__":
+    main()

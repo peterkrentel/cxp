@@ -1,0 +1,68 @@
+"""Verifier agent — grades executor output and routes next steps."""
+
+from __future__ import annotations
+
+import json
+import os
+
+from ..agent_shell import AgentShell
+from ..packet import CXPPacket, PacketType, Payload, RoutingHints
+
+SKILL = open("/skills/verifier_v1.md").read() if os.path.exists("/skills/verifier_v1.md") else ""
+
+SYSTEM = """You are a verification specialist in a distributed AI swarm.
+Given an artifact and its original goal, evaluate:
+1. Correctness — does it achieve the goal?
+2. Completeness — is anything missing?
+3. Safety — are there obvious security or reliability issues?
+
+Return ONLY a JSON object:
+{
+  "score": <float 0.0-1.0>,
+  "passed": <true|false>,
+  "issues": ["issue1", "issue2"],
+  "suggestion": "one sentence on biggest improvement if failed"
+}
+No prose, no fences.
+""" + SKILL
+
+
+class VerifierAgent(AgentShell):
+    def __init__(self) -> None:
+        super().__init__("verifier-1", capabilities=["verify"])
+
+    async def _execute(self, packet: CXPPacket) -> str:
+        prompt = (
+            f"Original goal: {packet.payload.goal}\n\n"
+            f"Artifact to verify:\n{packet.payload.context}"
+        )
+        raw = await self.llm(SYSTEM, prompt)
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        result = json.loads(raw)
+
+        packet.quality_score = float(result.get("score", 0.5))
+
+        if not result.get("passed", False):
+            # spawn a reflect packet so the system can learn
+            reflect = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="reflect",
+                priority=3,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal="Self-improve: update skill based on failed verification",
+                    instructions=(
+                        f"Issues found: {result.get('issues', [])}\n"
+                        f"Suggestion: {result.get('suggestion', '')}\n"
+                        "Propose a one-paragraph update to the executor skill file to prevent this."
+                    ),
+                    context=packet.payload.context,
+                ),
+            )
+            reflect.append_trace(self.agent_id, "created", "spawned due to failed verification")
+            await self.emit_packet(reflect)
+
+        issues = result.get("issues", [])
+        return json.dumps({"score": packet.quality_score, "passed": result.get("passed"), "issues": issues})

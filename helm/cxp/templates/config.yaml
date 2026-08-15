@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cxp-memory
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.memoryPVC.size }}
+  {{- if .Values.memoryPVC.storageClass }}
+  storageClassName: {{ .Values.memoryPVC.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.skillsConfigMap }}
+data:
+  planner_v1.md: |
+{{ .Files.Get "skills/planner_v1.md" | indent 4 }}
+  executor_v1.md: |
+{{ .Files.Get "skills/executor_v1.md" | indent 4 }}
+  verifier_v1.md: |
+{{ .Files.Get "skills/verifier_v1.md" | indent 4 }}

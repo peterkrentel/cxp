@@ -1,0 +1,65 @@
+## --------------------------------------------------------------------------- #
+## Global                                                                       #
+## --------------------------------------------------------------------------- #
+image:
+  repository: cxp-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+natsUrl: "nats://cxp-nats:4222"
+ollamaUrl: "http://cxp-ollama:11434"
+ollamaModel: "qwen2.5:1.5b"
+
+## --------------------------------------------------------------------------- #
+## Ollama sub-chart overrides                                                   #
+## --------------------------------------------------------------------------- #
+ollama:
+  ollama:
+    models:
+      - qwen2.5:1.5b
+  service:
+    type: ClusterIP
+    port: 11434
+  persistentVolume:
+    enabled: true
+    size: 10Gi
+
+## --------------------------------------------------------------------------- #
+## NATS sub-chart overrides                                                     #
+## --------------------------------------------------------------------------- #
+nats:
+  config:
+    jetstream:
+      enabled: true
+    cluster:
+      enabled: false
+  service:
+    port: 4222
+
+## --------------------------------------------------------------------------- #
+## Shared volumes                                                               #
+## --------------------------------------------------------------------------- #
+skillsConfigMap: cxp-skills   # created by Helm from skills/
+memoryPVC:
+  size: 1Gi
+  storageClass: standard
+
+## --------------------------------------------------------------------------- #
+## Agent replicas                                                               #
+## --------------------------------------------------------------------------- #
+agents:
+  planner:
+    replicas: 1
+    role: planner
+  executor:
+    replicas: 2       # scale out for parallelism
+    role: executor
+  verifier:
+    replicas: 1
+    role: verifier
+  reflect:
+    replicas: 1
+    role: reflect
+  dashboard:
+    replicas: 1
+    role: dashboard

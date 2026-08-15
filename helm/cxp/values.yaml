@@ -49,6 +49,11 @@ memoryPVC:
 ## Traefik ingress controller                                                   #
 ## --------------------------------------------------------------------------- #
 traefik:
+  deployment:
+    replicas: 1
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
   service:
     type: NodePort
   ports:

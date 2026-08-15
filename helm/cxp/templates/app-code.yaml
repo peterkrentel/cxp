@@ -43,3 +43,5 @@ data:
 {{ .Files.Get "app/src/agents/verifier.py" | indent 4 }}
   reflect.py: |
 {{ .Files.Get "app/src/agents/reflect.py" | indent 4 }}
+  assessor.py: |
+{{ .Files.Get "app/src/agents/assessor.py" | indent 4 }}

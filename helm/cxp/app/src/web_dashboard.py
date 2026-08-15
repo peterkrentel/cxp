@@ -34,19 +34,25 @@ _nc = None
 
 async def subscribe_nats():
     global _nc
-    _nc = await nats.connect(NATS_URL)
+    try:
+        _nc = await nats.connect(NATS_URL)
+        print(f"✓ Connected to NATS: {NATS_URL}")
+    except Exception as e:
+        print(f"✗ Failed to connect to NATS: {e}")
+        raise
 
     async def on_dashboard(msg):
         try:
             data = json.loads(msg.data)
             state["agents"][data.get("agent")] = data
             state["last_activity"] = datetime.now().isoformat()
-        except:
-            pass
+        except Exception as e:
+            print(f"Dashboard packet error: {e}")
 
     async def on_result(msg):
         try:
             packet = CXPPacket.model_validate_json(msg.data)
+            print(f"✓ Result packet: {packet.id[:8]} (cap={packet.capability}, status={packet.status})")
             state["packets"].append({
                 "id": packet.id[:8],
                 "type": packet.type.value,
@@ -67,8 +73,8 @@ async def subscribe_nats():
             if packet.type.value == "reflect":
                 state["stats"]["reflects"] += 1
             state["last_activity"] = datetime.now().isoformat()
-        except:
-            pass
+        except Exception as e:
+            print(f"Result packet error: {e}")
 
     async def on_thinking(msg):
         try:
@@ -79,12 +85,13 @@ async def subscribe_nats():
                 "text": data.get("text", ""),
                 "stream": data.get("stream", False),
             })
-        except:
-            pass
+        except Exception as e:
+            print(f"Thinking packet error: {e}")
 
     await _nc.subscribe(SUBJECT_DASHBOARD, cb=on_dashboard)
     await _nc.subscribe(SUBJECT_RESULTS, cb=on_result)
     await _nc.subscribe(SUBJECT_THINKING, cb=on_thinking)
+    print(f"✓ Subscribed to {SUBJECT_DASHBOARD}, {SUBJECT_RESULTS}, {SUBJECT_THINKING}")
     while True:
         await asyncio.sleep(1)
 

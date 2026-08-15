@@ -25,6 +25,8 @@ data:
 {{ .Files.Get "app/src/memory.py" | indent 4 }}
   dashboard.py: |
 {{ .Files.Get "app/src/dashboard.py" | indent 4 }}
+  web_dashboard.py: |
+{{ .Files.Get "app/src/web_dashboard.py" | indent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap

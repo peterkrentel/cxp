@@ -4,7 +4,7 @@ metadata:
   name: cxp-test-runner
   namespace: {{ .Release.Namespace }}
 spec:
-  schedule: "0 * * * *"    # every hour
+  schedule: "0 * * * *"
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
@@ -21,9 +21,10 @@ spec:
                   set -e
                   cp /cm/root/main.py /app/main.py
                   cp /cm/root/requirements.txt /app/requirements.txt
-                  mkdir -p /app/src/agents /app/tests
+                  mkdir -p /app/src/agents /app/tests/results
                   cp /cm/src/*.py /app/src/
                   cp /cm/agents/*.py /app/src/agents/
+                  cp /cm/tests/run_tests.py /app/tests/run_tests.py 2>/dev/null || true
                   pip install --quiet --target /app/packages -r /app/requirements.txt
               volumeMounts:
                 - { name: app,       mountPath: /app }
@@ -33,16 +34,36 @@ spec:
           containers:
             - name: test-runner
               image: python:3.12-slim
-              command: ["python", "/app/tests/run_tests.py"]
+              command:
+                - sh
+                - -c
+                - |
+                  python /app/tests/run_tests.py
+                  # Push results to git if credentials are available
+                  if [ -f /git-creds/token ] && [ -f /git-creds/repo ]; then
+                    cd /results
+                    git config user.email "cxp-bot@localhost"
+                    git config user.name "CXP Test Runner"
+                    REPO=$(cat /git-creds/repo)
+                    TOKEN=$(cat /git-creds/token)
+                    git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git" 2>/dev/null || true
+                    git add tests/results/ && git commit -m "test results $(date +%Y%m%d_%H%M)" && git push || true
+                  fi
               env:
-                - { name: NATS_URL,    value: "{{ $.Values.natsUrl }}" }
-                - { name: PYTHONPATH,  value: /app/packages }
+                - { name: NATS_URL,        value: "{{ $.Values.natsUrl }}" }
+                - { name: CXP_WEB_API,     value: "http://cxp-web:8080" }
+                - { name: PYTHONPATH,      value: /app/packages }
               volumeMounts:
-                - { name: app,    mountPath: /app }
-                - { name: memory, mountPath: /data }
+                - { name: app,      mountPath: /app }
+                - { name: memory,   mountPath: /data }
+                - { name: git-creds, mountPath: /git-creds, readOnly: true }
           volumes:
             - { name: app,       emptyDir: {} }
             - { name: cm-root,   configMap: { name: cxp-app-root } }
             - { name: cm-src,    configMap: { name: cxp-app-src } }
             - { name: cm-agents, configMap: { name: cxp-app-agents } }
             - { name: memory,    persistentVolumeClaim: { claimName: cxp-memory } }
+            - name: git-creds
+              secret:
+                secretName: cxp-git-creds
+                optional: true   # pod still runs without secret

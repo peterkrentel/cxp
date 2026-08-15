@@ -4,9 +4,14 @@ CHART      = helm/cxp
 
 .PHONY: deploy upgrade destroy submit dashboard logs
 
-# First install or idempotent upgrade
+# First install or idempotent upgrade — then auto port-forward web dashboard
 deploy:
 	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace
+	@echo "Waiting for web pod..."
+	kubectl rollout status deployment/cxp-web -n $(NAMESPACE) --timeout=120s
+	@pkill -f "port-forward.*cxp-web" 2>/dev/null || true
+	kubectl port-forward -n $(NAMESPACE) svc/cxp-web 8080:8080 --address 0.0.0.0 &
+	@echo "✓ Web dashboard: http://localhost:8080"
 
 # Alias
 upgrade: deploy

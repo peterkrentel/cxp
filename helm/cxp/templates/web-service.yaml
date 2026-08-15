@@ -5,6 +5,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: cxp
+  labels:
+    app.kubernetes.io/name: cxp
     app.kubernetes.io/component: web-dashboard
 spec:
   type: {{ .Values.webService.type | default "ClusterIP" }}

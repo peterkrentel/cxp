@@ -69,3 +69,6 @@ agents:
   dashboard:
     replicas: 1
     role: dashboard
+  web:
+    replicas: 1
+    role: web

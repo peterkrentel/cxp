@@ -45,7 +45,13 @@ memoryPVC:
   storageClass: standard
 
 ## --------------------------------------------------------------------------- #
-## Agent replicas                                                               #
+## Web Dashboard Service                                                        #
+## --------------------------------------------------------------------------- #
+webService:
+  type: NodePort     # Change to ClusterIP if using port-forward
+  port: 8080
+  nodePort: 30080    # Access via http://localhost:30080
+
 ## --------------------------------------------------------------------------- #
 agents:
   planner:
@@ -63,3 +69,7 @@ agents:
   dashboard:
     replicas: 1
     role: dashboard
+  web:
+    replicas: 1
+    role: web
+    port: 8080        # HTTP web dashboard

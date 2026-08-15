@@ -5,5 +5,8 @@ dependencies:
 - name: ollama
   repository: https://otwld.github.io/ollama-helm/
   version: 0.59.0
-digest: sha256:fe620ad07ddd1b4cab0bbe9547c73fb34ea97d15423f71f693a529fae1b56784
-generated: "2026-08-15T13:01:18.473222-05:00"
+- name: traefik
+  repository: https://traefik.github.io/charts
+  version: 32.1.0
+digest: sha256:db80d2855dd8523014178f74448d5c617e61b3bf508e852ca29a6b7d3c2b6628
+generated: "2026-08-15T16:52:06.683722-05:00"

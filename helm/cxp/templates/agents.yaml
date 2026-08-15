@@ -51,7 +51,7 @@ spec:
           env:
             - { name: NATS_URL,       value: "{{ $.Values.natsUrl }}" }
             - { name: OLLAMA_URL,     value: "{{ $.Values.ollamaUrl }}" }
-            - { name: OLLAMA_MODEL,   value: "{{ $.Values.ollamaModel }}" }
+            - { name: OLLAMA_MODEL,   value: "{{ if $cfg.model }}{{ $cfg.model }}{{ else }}{{ $.Values.ollamaModel }}{{ end }}" }
             - { name: CXP_SKILLS_DIR, value: /skills }
             - { name: CXP_MEMORY_PATH,value: /data/memory.json }
             - { name: PYTHONPATH,     value: /app/packages }

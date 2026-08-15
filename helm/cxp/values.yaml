@@ -16,6 +16,7 @@ ollamaModel: "qwen2.5:1.5b"
 ollama:
   ollama:
     models:
+      - qwen2.5:0.5b
       - qwen2.5:1.5b
   service:
     type: ClusterIP
@@ -70,18 +71,24 @@ agents:
   planner:
     replicas: 1
     role: planner
+    model: qwen2.5:0.5b   # fast — just needs to decompose tasks
   executor:
-    replicas: 2       # scale out for parallelism
+    replicas: 2
     role: executor
+    model: qwen2.5:1.5b   # quality output
   verifier:
     replicas: 1
     role: verifier
+    model: qwen2.5:0.5b   # fast — just needs to score
   reflect:
     replicas: 1
     role: reflect
+    model: qwen2.5:1.5b   # needs to reason about improvements
   dashboard:
     replicas: 1
     role: dashboard
+    model: ""
   web:
     replicas: 1
     role: web
+    model: ""

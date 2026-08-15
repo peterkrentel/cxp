@@ -53,7 +53,7 @@ class AgentShell(ABC):
                 log.warning("[%s] bad packet: %s", self.agent_id, exc)
                 return
 
-            if packet.status \!= PacketStatus.PENDING:
+            if packet.status != PacketStatus.PENDING:
                 return
 
             packet.claim(self.agent_id)

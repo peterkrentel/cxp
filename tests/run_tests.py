@@ -187,6 +187,21 @@ def main():
     passed = sum(1 for r in results if r["status"] == "PASS")
     print(f"\n{passed}/{len(results)} passed")
 
+    # Write results to file
+    import os
+    results_dir = os.path.join(os.path.dirname(__file__), "results")
+    os.makedirs(results_dir, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out_file = os.path.join(results_dir, f"run_{ts}.json")
+    with open(out_file, "w") as f:
+        json.dump({
+            "timestamp": ts,
+            "passed": passed,
+            "total": len(results),
+            "results": results,
+        }, f, indent=2, default=str)
+    print(f"\nResults saved: tests/results/run_{ts}.json")
+
 
 if __name__ == "__main__":
     main()

@@ -1,146 +1,129 @@
-# CXP Test Examples — Start Here
+# CXP Test Cases
 
-Run these in order. Each one teaches something different.
-
----
-
-## Level 1: Simple Generation
-
-**Goal:** Verify basic planner → executor → verifier loop works.
-
+Submit via web UI at http://localhost or:
 ```bash
-kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit \
-  "generate a Python function that adds two numbers"
+kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit "GOAL"
 ```
 
-**What to expect:**
-- Planner decomposes into [generate, verify]
-- Executor produces a simple function
-- Verifier scores it (should be high, task is trivial)
-- Result appears in dashboard in ~10 seconds
-
-**Success metric:** Score > 0.8, function is syntactically valid
+Each test has a label — what AI capability it evaluates. Score > 0.8 = pass.
 
 ---
 
-## Level 2: Structure & Standards
+## CODE_GENERATION — basic output quality
 
-**Goal:** Test if verifier enforces quality rules.
+```
+write a Python function that adds two numbers with type hints and docstring
+```
+**Expect:** Clean Python, type hints, docstring, no syntax errors
+**Self-improve trigger:** Missing type hints → verifier scores < 0.8 → reflect updates executor skill
 
+---
+
+## ERROR_HANDLING — robustness patterns
+
+```
+write a Python function that reads a JSON file and returns a dict, handling file not found and JSON decode errors
+```
+**Expect:** try/except blocks for FileNotFoundError and json.JSONDecodeError
+**Self-improve trigger:** Missing exception types → reflect adds "always name specific exceptions" to skill
+
+---
+
+## STRUCTURED_OUTPUT — multi-section generation
+
+```
+generate a Kubernetes Deployment manifest for a Node.js API with health checks, resource limits, and non-root security context
+```
+**Expect:** Valid YAML, readinessProbe, livenessProbe, resources.limits, securityContext.runAsNonRoot
+**Self-improve trigger:** Missing security context → verifier flags → executor skill learns security defaults
+
+---
+
+## DECOMPOSITION — planner quality
+
+```
+scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README
+```
+**Expect:** Planner breaks into 5+ sub-tasks (API code, DB model, Docker, tests, docs)
+**Self-improve trigger:** Missing test sub-task → verifier scores < 0.7 → planner skill updated
+
+---
+
+## SELF_IMPROVEMENT — reflect loop visible
+
+Run this 3 times in a row and watch the executor skill file evolve:
+```
+generate a Python class for a rate limiter with per-user limits, thread safety, and logging
+```
+**Expect:** Run 1 might miss thread safety. Verifier scores 0.6. Reflect rewrites executor_v1.md.
+Run 2 includes thread safety. Score 0.85.
+
+Check skill evolution:
 ```bash
-kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit \
-  "generate a Python module for parsing CSV files with error handling"
+kubectl exec -n cxp deploy/cxp-dashboard -- cat /skills/executor_v1.md
 ```
 
-**What to expect:**
-- Executor should include try/catch, logging, type hints
-- Verifier checks for these; if missing, scores < 0.8
-- Reflect agent rewrites executor_v1.md skill to emphasize error handling
-- Next similar task includes error handling automatically
-
-**Success metric:** First run might score 0.6, next run scores 0.85+
-
 ---
 
-## Level 3: Multi-Step Decomposition
+## INFRA_AS_CODE — real-world DevOps
 
-**Goal:** Verify planner breaks complex tasks into sub-steps.
-
-```bash
-kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit \
-  "create a Kubernetes manifest for a PostgreSQL StatefulSet with persistence, backup sidecar, and resource limits"
 ```
-
-**What to expect:**
-- Planner spawns 4-5 packets: [main StatefulSet, backup spec, security policy, resource limits, verify]
-- Multiple executors claim different tasks in parallel
-- Verifier checks for security (non-root user), persistence (PVC), resources (CPU/memory limits)
-
-**Success metric:** All sub-artifacts generated, final score > 0.75
+generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits
+```
+**Expect:** Valid YAML, persistence.enabled, auth.password (placeholder), sentinel config, resources block
 
 ---
 
-## Level 4: Failure → Self-Improvement
+## SECURITY_AWARENESS — verifier catches risks
 
-**Goal:** Watch reflect agent improve the system.
+```
+generate a Python web scraper that downloads URLs from user input and saves to disk
+```
+**Expect:** Verifier should flag: no URL validation, path traversal risk, no rate limiting
+**Self-improve trigger:** Executor skill learns to always validate external input
 
+---
+
+## MULTI_AGENT_PARALLELISM — executor scaling
+
+Scale executors to 4 first:
 ```bash
-# Run 3 times with similar task
-for i in {1..3}; do
-  echo "=== Run $i ==="
-  kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit \
-    "generate a REST API endpoint in Go with validation and error responses"
-  sleep 3
+kubectl scale deployment/cxp-executor -n cxp --replicas=4
+```
+Then submit 5 tasks quickly:
+```bash
+for i in {1..5}; do
+  kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit "generate a Dockerfile for a Python $i.x application"
+  sleep 1
 done
 ```
-
-**Watch happen:**
-- Run 1: Maybe missing input validation
-- Run 2: Reflect agent tweaks executor skill to include validation
-- Run 3: Validation included automatically
-
-**Success metric:** Reputation score for executor increases across runs
+**Expect:** All 5 tasks processed in parallel. Dashboard shows 4 executors all Working simultaneously.
 
 ---
 
-## Level 5: Full Loop
+## REPUTATION_ROUTING — best agent wins
 
-**Goal:** End-to-end self-improving workflow.
-
+Submit 10 tasks of the same type. After ~5, reputation scores settle.
+Check which executor has highest score:
 ```bash
-# Submit batches over 10 minutes
-for batch in 1 2 3; do
-  for i in {1..3}; do
-    kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit \
-      "generate a Helm values.yaml for a production microservice with monitoring, scaling, and security"
-    sleep 2
-  done
-  echo "Batch $batch complete, waiting 2 min..."
-  sleep 120
-done
-```
-
-**Observe:**
-- Reputation scores climb
-- Skill files evolve (`cat /skills/executor_v1.md` changes)
-- Quality improves per batch
-
----
-
-## Validation Rules to Check
-
-After each task, verify:
-
-```bash
-# Get the task output
-TASK_ID="<from submit output>"
-kubectl exec -n cxp deploy/cxp-dashboard -- cat /data/memory.json | grep $TASK_ID
-
-# Check score
-jq '.packets[] | select(.id == "'$TASK_ID'") | .payload.score'
-
-# Check skill evolution
-kubectl exec -n cxp deploy/cxp-dashboard -- diff /skills/executor_v1.md /skills/executor_v1.md.bak
+kubectl exec -n cxp deploy/cxp-dashboard -- cat /data/memory.json | python3 -c "
+import sys, json
+m = json.load(sys.stdin)
+for agent, caps in m['reputation'].items():
+    for cap, scores in caps.items():
+        s = scores['successes']
+        f = scores['failures']
+        print(f'{agent} {cap}: {s/(s+f)*100:.0f}% ({s}/{s+f})')
+"
 ```
 
 ---
 
-## Common Failures & Fixes
+## What makes a good test result
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Timeout (task hangs) | Ollama model still loading | Wait 5 min, check `kubectl logs -n cxp deploy/cxp-ollama` |
-| No output | Agent crashed | Check `kubectl logs -n cxp deploy/cxp-executor` |
-| Same mistakes repeat | Reflect not triggering | Check verifier score threshold in `helm/cxp/values.yaml` |
-| Scores always 1.0 | Verifier too lenient | Edit `skills/verifier_v1.md` to be stricter |
-
----
-
-## What to Try Next
-
-Once basics work:
-1. **Vary task complexity** — simple → medium → complex
-2. **Measure improvement** — track scores over time
-3. **Tweak skills** — edit `executor_v1.md` manually, redeploy, see impact
-4. **Scale executors** — change `helm/cxp/values.yaml` agents.executor.replicas to 5, rerun same task, watch parallelism
-5. **Change model** — swap `ollamaModel: mistral:latest`, redeploy, compare outputs
+| Score | Meaning |
+|-------|---------|
+| 0.9+ | Perfect — complete, safe, production-ready |
+| 0.7-0.9 | Good — minor gaps, reflect will improve |
+| 0.5-0.7 | Weak — major issues, reflect will rewrite skill |
+| < 0.5 | Fail — fundamental problem, check agent logs |

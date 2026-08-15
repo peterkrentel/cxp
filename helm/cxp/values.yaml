@@ -15,9 +15,7 @@ ollamaModel: "qwen2.5:1.5b"
 ## --------------------------------------------------------------------------- #
 ollama:
   ollama:
-    models:
-      - qwen2.5:0.5b
-      - qwen2.5:1.5b
+    models: []    # models already cached in PVC; auto-pull causes PostStartHook failure
   service:
     type: ClusterIP
     port: 11434

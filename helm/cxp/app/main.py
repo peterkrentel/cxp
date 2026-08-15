@@ -29,6 +29,12 @@ def main() -> None:
         from src.dashboard import Dashboard
         asyncio.run(Dashboard().run())
 
+    elif role == "web":
+        # HTTP web dashboard
+        import uvicorn
+        from src.web_dashboard import app
+        uvicorn.run(app, host="0.0.0.0", port=8080)
+
     elif role == "idle":
         # keeps the pod alive so you can exec in and run the dashboard manually
         import time

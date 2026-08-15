@@ -14,7 +14,7 @@ SYSTEM = """You are a task planner in a distributed AI swarm.
 Given a high-level goal, decompose it into 2-5 focused sub-tasks.
 Return ONLY a JSON array of objects with these fields:
   type        - one of: code, verify, reflect
-  capability  - short slug e.g. "k8s-manifest", "python-code", "security-review"
+  capability  - one of: code, verify, reflect (MUST match type, cannot invent names)
   goal        - one sentence describing what the sub-task achieves
   instructions - concrete instructions for the worker agent
   priority    - integer 1-5 (5 = urgent)

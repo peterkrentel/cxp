@@ -12,3 +12,6 @@ dependencies:
   - name: ollama
     version: "0.59.0"
     repository: "https://otwld.github.io/ollama-helm/"
+  - name: traefik
+    version: "32.1.0"
+    repository: "https://traefik.github.io/charts"

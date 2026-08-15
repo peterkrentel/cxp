@@ -45,12 +45,25 @@ memoryPVC:
   storageClass: standard
 
 ## --------------------------------------------------------------------------- #
+## Traefik ingress controller                                                   #
+## --------------------------------------------------------------------------- #
+traefik:
+  service:
+    type: NodePort
+  ports:
+    web:
+      nodePort: 32080
+      hostPort: 80     # maps to kind extraPortMapping containerPort: 80
+  providers:
+    kubernetesIngress:
+      enabled: true
+
+## --------------------------------------------------------------------------- #
 ## Web Dashboard Service                                                        #
 ## --------------------------------------------------------------------------- #
 webService:
-  type: NodePort     # Change to ClusterIP if using port-forward
+  type: ClusterIP      # Traefik handles external access now
   port: 8080
-  nodePort: 30080    # Access via http://localhost:30080
 
 ## --------------------------------------------------------------------------- #
 agents:

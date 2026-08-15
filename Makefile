@@ -2,45 +2,43 @@ NAMESPACE  = cxp
 RELEASE    = cxp
 CHART      = helm/cxp
 
-.PHONY: deploy upgrade destroy submit dashboard logs
+.PHONY: deploy sync destroy reset submit dashboard logs web cluster
 
-# First install or idempotent upgrade — auto-syncs src into Helm chart first
+# Sync src → Helm chart, install/upgrade — access via http://localhost
 deploy: sync
+	helm dependency update $(CHART)
 	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace
-	@echo "Waiting for web pod..."
-	kubectl rollout status deployment/cxp-web -n $(NAMESPACE) --timeout=120s
-	@pkill -f "port-forward.*cxp-web" 2>/dev/null || true
-	kubectl port-forward -n $(NAMESPACE) svc/cxp-web 8080:8080 --address 0.0.0.0 &
-	@echo "✓ Web dashboard: http://localhost:8080"
+	@echo "✓ Access: http://localhost"
 
-# Sync src files into Helm chart so ConfigMaps pick up latest code
+# Sync src files into Helm ConfigMaps
 sync:
 	cp src/*.py $(CHART)/app/src/
 	cp src/agents/*.py $(CHART)/app/src/agents/
 	cp main.py $(CHART)/app/main.py
 	cp requirements.txt $(CHART)/app/requirements.txt
 
-# Alias
-upgrade: deploy
-
-# Destroy everything EXCEPT the memory PVC (annotated keep)
+# Destroy release but keep memory PVC
 destroy:
 	helm uninstall $(RELEASE) --namespace $(NAMESPACE) || true
 
-# Hard reset: wipe PVC too, then redeploy fresh
+# Full reset: recreate kind cluster with correct port mappings, then deploy
 reset:
-	helm uninstall $(RELEASE) --namespace $(NAMESPACE) || true
-	kubectl delete pvc cxp-memory -n $(NAMESPACE) || true
-	sleep 3
-	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace
+	kind delete cluster --name cxp || true
+	kind create cluster --config kind-config.yaml
+	$(MAKE) deploy
+
+# Recreate kind cluster only
+cluster:
+	kind delete cluster --name cxp || true
+	kind create cluster --config kind-config.yaml
 
 # Submit a task
 submit:
 	kubectl exec -n $(NAMESPACE) deploy/cxp-dashboard -- python /app/main.py submit "$(GOAL)"
 
-# Open web dashboard in browser (port-forward)
+# Fallback port-forward if ingress unavailable
 web:
-	kubectl port-forward -n $(NAMESPACE) svc/cxp-web 8080:8080
+	kubectl port-forward -n $(NAMESPACE) svc/cxp-web 8080:8080 --address 0.0.0.0
 
 # Live terminal dashboard
 dashboard:

@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cxp-test-runner
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: "0 * * * *"    # every hour
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: assemble
+              image: python:3.12-slim
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  cp /cm/root/main.py /app/main.py
+                  cp /cm/root/requirements.txt /app/requirements.txt
+                  mkdir -p /app/src/agents /app/tests
+                  cp /cm/src/*.py /app/src/
+                  cp /cm/agents/*.py /app/src/agents/
+                  pip install --quiet --target /app/packages -r /app/requirements.txt
+              volumeMounts:
+                - { name: app,       mountPath: /app }
+                - { name: cm-root,   mountPath: /cm/root }
+                - { name: cm-src,    mountPath: /cm/src }
+                - { name: cm-agents, mountPath: /cm/agents }
+          containers:
+            - name: test-runner
+              image: python:3.12-slim
+              command: ["python", "/app/tests/run_tests.py"]
+              env:
+                - { name: NATS_URL,    value: "{{ $.Values.natsUrl }}" }
+                - { name: PYTHONPATH,  value: /app/packages }
+              volumeMounts:
+                - { name: app,    mountPath: /app }
+                - { name: memory, mountPath: /data }
+          volumes:
+            - { name: app,       emptyDir: {} }
+            - { name: cm-root,   configMap: { name: cxp-app-root } }
+            - { name: cm-src,    configMap: { name: cxp-app-src } }
+            - { name: cm-agents, configMap: { name: cxp-app-agents } }
+            - { name: memory,    persistentVolumeClaim: { claimName: cxp-memory } }

@@ -47,3 +47,15 @@ dashboard:
 # Tail all agent logs
 logs:
 	kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/name=cxp --prefix --follow
+
+# Run test suite manually
+test:
+	python3 tests/run_tests.py
+
+# Watch test results as they accumulate
+test-watch:
+	watch -n 30 'ls -lt tests/results/*.json 2>/dev/null | head -5'
+
+# Trigger test CronJob immediately
+test-now:
+	kubectl create job -n $(NAMESPACE) --from=cronjob/cxp-test-runner cxp-test-$(shell date +%s)

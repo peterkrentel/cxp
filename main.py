@@ -25,6 +25,10 @@ def main() -> None:
         from src.agents.reflect import ReflectAgent
         asyncio.run(ReflectAgent().run())
 
+    elif role == "assessor":
+        from src.agents.assessor import AssessorAgent
+        asyncio.run(AssessorAgent().run())
+
     elif role == "dashboard":
         from src.dashboard import Dashboard
         asyncio.run(Dashboard().run())

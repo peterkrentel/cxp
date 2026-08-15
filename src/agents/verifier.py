@@ -65,4 +65,21 @@ class VerifierAgent(AgentShell):
             await self.emit_packet(reflect)
 
         issues = result.get("issues", [])
+
+        # Always spawn an assess packet to label the artifact
+        assess = CXPPacket(
+            origin=self.agent_id,
+            type=PacketType.REFLECT,
+            capability="assess",
+            priority=1,
+            task_id=packet.task_id,
+            parent_packet_id=packet.id,
+            payload=Payload(
+                goal=packet.payload.goal,
+                instructions="Label this artifact with AI capability tags",
+                context=packet.payload.context,
+            ),
+        )
+        await self.emit_packet(assess)
+
         return json.dumps({"score": packet.quality_score, "passed": result.get("passed"), "issues": issues})

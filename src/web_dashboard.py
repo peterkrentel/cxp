@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from collections import deque
@@ -17,6 +18,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .agent_shell import NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS, SUBJECT_THINKING
 from .memory import get_store
 from .packet import CXPPacket, PacketType, Payload
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="CXP")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -36,9 +40,9 @@ async def subscribe_nats():
     global _nc
     try:
         _nc = await nats.connect(NATS_URL)
-        print(f"✓ Connected to NATS: {NATS_URL}")
+        log.info(f"✓ Connected to NATS: {NATS_URL}")
     except Exception as e:
-        print(f"✗ Failed to connect to NATS: {e}")
+        log.error(f"✗ Failed to connect to NATS: {e}")
         raise
 
     async def on_dashboard(msg):
@@ -47,12 +51,12 @@ async def subscribe_nats():
             state["agents"][data.get("agent")] = data
             state["last_activity"] = datetime.now().isoformat()
         except Exception as e:
-            print(f"Dashboard packet error: {e}")
+            log.warning(f"Dashboard packet error: {e}")
 
     async def on_result(msg):
         try:
             packet = CXPPacket.model_validate_json(msg.data)
-            print(f"✓ Result packet: {packet.id[:8]} (cap={packet.capability}, status={packet.status})")
+            log.info(f"✓ Result packet: {packet.id[:8]} (cap={packet.capability}, status={packet.status})")
             state["packets"].append({
                 "id": packet.id[:8],
                 "type": packet.type.value,
@@ -74,7 +78,7 @@ async def subscribe_nats():
                 state["stats"]["reflects"] += 1
             state["last_activity"] = datetime.now().isoformat()
         except Exception as e:
-            print(f"Result packet error: {e}")
+            log.warning(f"Result packet error: {e}")
 
     async def on_thinking(msg):
         try:
@@ -86,19 +90,26 @@ async def subscribe_nats():
                 "stream": data.get("stream", False),
             })
         except Exception as e:
-            print(f"Thinking packet error: {e}")
+            log.warning(f"Thinking packet error: {e}")
 
     await _nc.subscribe(SUBJECT_DASHBOARD, cb=on_dashboard)
     await _nc.subscribe(SUBJECT_RESULTS, cb=on_result)
     await _nc.subscribe(SUBJECT_THINKING, cb=on_thinking)
-    print(f"✓ Subscribed to {SUBJECT_DASHBOARD}, {SUBJECT_RESULTS}, {SUBJECT_THINKING}")
+    log.info(f"✓ Subscribed to {SUBJECT_DASHBOARD}, {SUBJECT_RESULTS}, {SUBJECT_THINKING}")
     while True:
         await asyncio.sleep(1)
 
 
 @app.on_event("startup")
 async def startup():
-    asyncio.create_task(subscribe_nats())
+    log.info("Starting web dashboard...")
+    task = asyncio.create_task(subscribe_nats())
+    # Wait a bit for the connection to establish, but don't block forever
+    try:
+        await asyncio.wait_for(asyncio.sleep(0.5), timeout=2.0)
+    except:
+        pass
+    log.info("Startup event completed (subscribe_nats running in background)")
 
 
 @app.post("/api/submit")

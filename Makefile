@@ -26,6 +26,10 @@ reset:
 submit:
 	kubectl exec -n $(NAMESPACE) deploy/cxp-dashboard -- python /app/main.py submit "$(GOAL)"
 
+# Open web dashboard in browser (port-forward)
+web:
+	kubectl port-forward -n $(NAMESPACE) svc/cxp-web 8080:8080
+
 # Live terminal dashboard
 dashboard:
 	kubectl exec -it -n $(NAMESPACE) deploy/cxp-dashboard -- python /app/main.py dashboard

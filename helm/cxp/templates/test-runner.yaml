@@ -21,10 +21,10 @@ spec:
                   set -e
                   cp /cm/root/main.py /app/main.py
                   cp /cm/root/requirements.txt /app/requirements.txt
+                  cp /cm/root/run_tests.py /app/tests/run_tests.py
                   mkdir -p /app/src/agents /app/tests/results
                   cp /cm/src/*.py /app/src/
                   cp /cm/agents/*.py /app/src/agents/
-                  cp /cm/tests/run_tests.py /app/tests/run_tests.py 2>/dev/null || true
                   pip install --quiet --target /app/packages -r /app/requirements.txt
               volumeMounts:
                 - { name: app,       mountPath: /app }

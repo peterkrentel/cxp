@@ -231,9 +231,68 @@ All config lives in `helm/cxp/values.yaml`. Key knobs:
 
 ---
 
-## Self-improvement loop
+## AI Software Factory
 
-When the verifier scores an artifact below threshold:
+CXP is an **autonomous software factory** — small local LLMs doing specialized work in a loop, getting measurably better over time.
+
+| Factory Role | CXP Agent |
+|---|---|
+| Requirements | Task goals you submit |
+| Developer | Executor (generates code/YAML/config) |
+| Code review | Verifier (scores quality 0–1) |
+| QA | CronJob test runner (hourly, autonomous) |
+| Postmortem | Reflect (reads failures) |
+| Process improvement | Skill file rewrite |
+| CI/CD | Helm + kubectl |
+| Observability | Web dashboard + LLM thinking stream |
+
+**What's missing to make it a full factory:** a `deployer` agent that runs `kubectl apply` or `python script.py` on verified artifacts. Currently generates — doesn't execute. Add with a dry-run safety gate.
+
+---
+
+## Self-Improvement Loop (detailed)
+
+When verifier scores output below threshold (default 0.75):
+
+1. Verifier spawns a `reflect` packet with failure details + original artifact
+2. Reflect agent reads current `executor_v1.md` skill file from `/skills/`
+3. Reflect calls LLM: *"Here's what failed. Rewrite this skill file to prevent it."*
+4. New `executor_v1.md` written to shared emptyDir volume
+5. Old version saved as `executor_v1.md.bak` (auditable history)
+6. Next executor run loads updated skill as its system prompt → better output
+
+This is **prompt-level evolution** — behavioral improvement without retraining weights.
+
+Check current skill and history:
+```bash
+kubectl exec -n cxp deploy/cxp-reflect -- cat /skills/executor_v1.md
+kubectl exec -n cxp deploy/cxp-reflect -- cat /skills/executor_v1.md.bak
+```
+
+---
+
+## AI Capability Labeling
+
+Every completed artifact is labeled by the **assessor agent** which reads it and classifies what AI capabilities it demonstrates.
+
+**Available labels:**
+`CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `SECURITY_AWARENESS`, `DECOMPOSITION`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`, `SELF_IMPROVEMENT`
+
+**Output format:**
+```json
+{
+  "labels": ["CODE_GENERATION", "ERROR_HANDLING"],
+  "verdict": "Function correctly handles FileNotFoundError with specific exception type",
+  "strengths": ["named exception types", "returns empty dict on error"],
+  "gaps": ["no logging", "no type hints"]
+}
+```
+
+Labels flow into semantic memory, building a searchable knowledge base of what the swarm has produced and what gaps remain.
+
+---
+
+
 1. A `reflect` packet is spawned with the failure details
 2. The reflect agent reads the current `executor_v1.md` skill file
 3. It rewrites the skill with guidance to prevent the same failure

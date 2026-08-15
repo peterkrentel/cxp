@@ -9,6 +9,8 @@ data:
 {{ .Files.Get "app/requirements.txt" | indent 4 }}
   main.py: |
 {{ .Files.Get "app/main.py" | indent 4 }}
+  run_tests.py: |
+{{ .Files.Get "app/tests/run_tests.py" | indent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -45,3 +47,5 @@ data:
 {{ .Files.Get "app/src/agents/reflect.py" | indent 4 }}
   assessor.py: |
 {{ .Files.Get "app/src/agents/assessor.py" | indent 4 }}
+  deployer.py: |
+{{ .Files.Get "app/src/agents/deployer.py" | indent 4 }}

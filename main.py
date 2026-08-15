@@ -29,6 +29,10 @@ def main() -> None:
         from src.agents.assessor import AssessorAgent
         asyncio.run(AssessorAgent().run())
 
+    elif role == "deployer":
+        from src.agents.deployer import DeployerAgent
+        asyncio.run(DeployerAgent().run())
+
     elif role == "dashboard":
         from src.dashboard import Dashboard
         asyncio.run(Dashboard().run())

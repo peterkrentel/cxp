@@ -105,3 +105,7 @@ agents:
     replicas: 1
     role: assessor
     model: qwen2.5:0.5b   # fast — just needs to label
+  deployer:
+    replicas: 1
+    role: deployer
+    model: ""             # no LLM needed — runs kubectl/python directly

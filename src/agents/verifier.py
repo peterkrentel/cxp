@@ -66,7 +66,7 @@ class VerifierAgent(AgentShell):
 
         issues = result.get("issues", [])
 
-        # Always spawn an assess packet to label the artifact
+        # Spawn assess packet for capability labeling
         assess = CXPPacket(
             origin=self.agent_id,
             type=PacketType.REFLECT,
@@ -81,5 +81,22 @@ class VerifierAgent(AgentShell):
             ),
         )
         await self.emit_packet(assess)
+
+        # Spawn deploy packet if score is high enough
+        if packet.quality_score and packet.quality_score >= 0.85:
+            deploy = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="deploy",
+                priority=2,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal=packet.payload.goal,
+                    instructions=str(packet.quality_score),
+                    context=packet.payload.context,
+                ),
+            )
+            await self.emit_packet(deploy)
 
         return json.dumps({"score": packet.quality_score, "passed": result.get("passed"), "issues": issues})

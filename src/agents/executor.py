@@ -18,7 +18,8 @@ the instructions specifically ask for prose.
 
 class ExecutorAgent(AgentShell):
     def __init__(self, agent_id: str = "executor-1", capabilities: list[str] | None = None) -> None:
-        super().__init__(agent_id, capabilities=capabilities or ["code", "k8s-manifest", "python-code", "any"])
+        # Only subscribe to "code" capability; reject old names like k8s-manifest, python-code
+        super().__init__(agent_id, capabilities=capabilities or ["code"])
 
     async def _execute(self, packet: CXPPacket) -> str:
         prompt = (

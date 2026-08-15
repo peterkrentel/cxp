@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from ..agent_shell import AgentShell
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
+log = logging.getLogger(__name__)
 SKILL = open("/skills/verifier_v1.md").read() if os.path.exists("/skills/verifier_v1.md") else ""
 
 SYSTEM = """You are a verification specialist in a distributed AI swarm.
@@ -38,7 +40,14 @@ class VerifierAgent(AgentShell):
         )
         raw = await self.llm(SYSTEM, prompt)
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        result = json.loads(raw)
+        
+        # Better error handling for JSON parsing
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as e:
+            log.error(f"Failed to parse verifier response: {e}\nRaw: {raw[:200]}")
+            # Default to fail if we can't parse
+            result = {"score": 0.0, "passed": False, "issues": [f"Parse error: {e}"], "suggestion": "Malformed response"}
 
         packet.quality_score = float(result.get("score", 0.5))
 
@@ -80,6 +89,7 @@ class VerifierAgent(AgentShell):
                 context=packet.payload.context,
             ),
         )
+        log.info(f"Emitting assess packet {assess.id[:8]}")
         await self.emit_packet(assess)
 
         # Spawn deploy packet if score is high enough
@@ -97,6 +107,7 @@ class VerifierAgent(AgentShell):
                     context=packet.payload.context,
                 ),
             )
+            log.info(f"Emitting deploy packet {deploy.id[:8]} (score={packet.quality_score})")
             await self.emit_packet(deploy)
 
         return json.dumps({"score": packet.quality_score, "passed": result.get("passed"), "issues": issues})

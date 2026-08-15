@@ -54,7 +54,7 @@ def main() -> None:
 
 async def _submit_task(goal: str) -> None:
     import nats
-    from src.agent_shell import NATS_URL, SUBJECT_PACKETS
+    from src.agent_shell import NATS_URL
     from src.packet import CXPPacket, PacketType, Payload
 
     nc = await nats.connect(NATS_URL)
@@ -66,7 +66,8 @@ async def _submit_task(goal: str) -> None:
         payload=Payload(goal=goal),
     )
     packet.append_trace("human", "created", "submitted via CLI")
-    await nc.publish(SUBJECT_PACKETS, packet.model_dump_json().encode())
+    # Route directly to the plan capability subject
+    await nc.publish(f"cxp.cap.plan", packet.model_dump_json().encode())
     await nc.drain()
     print(f"Task submitted: {packet.task_id[:8]}  goal='{goal}'")
 

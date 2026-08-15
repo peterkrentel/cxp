@@ -109,7 +109,7 @@ async def submit_task(request: Request):
         payload=Payload(goal=goal, instructions=goal, context=""),
     )
     if _nc:
-        await _nc.publish(SUBJECT_PACKETS, packet.model_dump_json().encode())
+        await _nc.publish("cxp.cap.plan", packet.model_dump_json().encode())
     return JSONResponse({"task_id": packet.task_id, "packet_id": packet.id[:8]})
 
 

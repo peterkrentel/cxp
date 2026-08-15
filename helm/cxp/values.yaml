@@ -54,10 +54,16 @@ traefik:
   ports:
     web:
       nodePort: 32080
-      hostPort: 80     # maps to kind extraPortMapping containerPort: 80
+      hostPort: 80
   providers:
     kubernetesIngress:
       enabled: true
+      allowExternalNameServices: true
+    kubernetesCRD:
+      enabled: true
+  ingressClass:
+    enabled: true
+    isDefaultClass: true
 
 ## --------------------------------------------------------------------------- #
 ## Web Dashboard Service                                                        #

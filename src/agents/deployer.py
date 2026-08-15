@@ -89,9 +89,12 @@ class DeployerAgent(AgentShell):
         return json.dumps(result)
 
     async def _try_deploy(self, artifact: str, goal: str) -> dict:
-        # Detect artifact type
+        # Detect artifact type and strip markdown code blocks
         artifact_stripped = artifact.strip()
         log.info(f"Attempting deployment: {goal[:60]}")
+
+        # Strip markdown code blocks (```language ... ```)
+        artifact_stripped = self._extract_from_markdown(artifact_stripped)
 
         if self._looks_like_yaml(artifact_stripped):
             log.debug("Detected YAML artifact")
@@ -102,6 +105,15 @@ class DeployerAgent(AgentShell):
         else:
             log.warning(f"Unrecognized artifact type: {artifact_stripped[:100]}")
             return {"deployed": False, "reason": "unrecognized artifact type", "preview": artifact_stripped[:200]}
+
+    def _extract_from_markdown(self, text: str) -> str:
+        """Extract code from markdown code blocks (```language ... ```)."""
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if len(lines) > 2 and lines[-1].strip() == "```":
+                # Extract everything between first and last line
+                return "\n".join(lines[1:-1]).strip()
+        return text
 
     def _looks_like_yaml(self, text: str) -> bool:
         return any(text.startswith(k) for k in ("apiVersion:", "kind:", "---\napiVersion"))

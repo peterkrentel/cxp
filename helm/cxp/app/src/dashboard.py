@@ -30,6 +30,13 @@ class Dashboard:
         self.recent_packets: deque[CXPPacket] = deque(maxlen=20)
         self.log_lines: deque[str] = deque(maxlen=MAX_LOG)
         self._lock = asyncio.Lock()
+        self.task_stats = {"submitted": 0, "done": 0, "error": 0, "pending": 0}
+        self.last_activity = datetime.now()
+        self.llm_calls = 0
+        self.reflect_rewrites = 0
+        # Last completed output for viewing
+        self.last_output: str = ""
+        self.last_goal: str = ""
 
     # ------------------------------------------------------------------ #
     # NATS listeners                                                       #
@@ -55,12 +62,30 @@ class Dashboard:
             return
         async with self._lock:
             self.recent_packets.append(packet)
-            icon = "✓" if packet.status.value == "done" else "✗"
+            self.last_activity = datetime.now()
+
+            if packet.task_id:
+                if packet.status.value == "done":
+                    self.task_stats["done"] += 1
+                elif packet.status.value == "error":
+                    self.task_stats["error"] += 1
+
+            if packet.type.value == "code":
+                self.llm_calls += 1
+                if packet.status.value == "done" and packet.payload and packet.payload.output:
+                    self.last_output = packet.payload.output
+                    self.last_goal = packet.payload.goal or ""
+
+            if packet.type.value == "reflect" and packet.status.value == "done":
+                self.reflect_rewrites += 1
+
+            icon = "✓" if packet.status.value == "done" else "✗" if packet.status.value == "error" else "⟳"
             ts = datetime.now().strftime("%H:%M:%S")
             score = f" score={packet.quality_score:.2f}" if packet.quality_score is not None else ""
+            goal_snippet = f" — {(packet.payload.goal or '')[:50]}" if packet.payload and packet.payload.goal else ""
             self.log_lines.append(
-                f"[dim]{ts}[/] {icon} [{packet.type.value}] {packet.id[:8]} "
-                f"cap={packet.capability}{score}"
+                f"[dim]{ts}[/] {icon} [bold]{packet.type.value}[/] {packet.id[:8]} "
+                f"cap={packet.capability}{score}[dim]{goal_snippet}[/]"
             )
 
     # ------------------------------------------------------------------ #
@@ -116,21 +141,57 @@ class Dashboard:
             )
         return Panel(t, title="[bold]Recent Packets[/]", border_style="green")
 
+    def _render_status(self) -> Panel:
+        """Show swarm health and activity metrics."""
+        t = Table.grid(padding=(0, 2))
+        
+        # Activity gauge
+        since_activity = (datetime.now() - self.last_activity).total_seconds()
+        activity_color = "green" if since_activity < 5 else "yellow" if since_activity < 15 else "red"
+        activity_text = f"[{activity_color}]{'🟢' if since_activity < 5 else '🟡' if since_activity < 15 else '⚫'}[/] Last activity: {since_activity:.0f}s ago"
+        
+        # Task progress
+        total = self.task_stats["done"] + self.task_stats["error"] + self.task_stats["pending"]
+        progress_pct = (self.task_stats["done"] / total * 100) if total > 0 else 0
+        progress_bar = "█" * int(progress_pct / 5) + "░" * (20 - int(progress_pct / 5))
+        
+        t.add_row("Tasks", f"[green]{self.task_stats['done']}✓[/] [red]{self.task_stats['error']}✗[/] [yellow]{self.task_stats['pending']}⟳[/]")
+        t.add_row("Progress", f"{progress_bar} {progress_pct:.0f}%")
+        t.add_row("LLM Calls", f"[cyan]{self.llm_calls}[/]")
+        t.add_row("Skill Updates", f"[magenta]{self.reflect_rewrites}[/]")
+        t.add_row("Status", activity_text)
+        
+        return Panel(t, title="[bold]Swarm Health[/]", border_style="cyan")
+
     def _render_log(self) -> Panel:
         lines = "\n".join(self.log_lines)
         return Panel(lines or "[dim]Waiting for activity…[/]", title="[bold]Live Log[/]", border_style="yellow")
 
+    def _render_output(self) -> Panel:
+        """Show the latest generated artifact."""
+        if self.last_output:
+            content = f"[bold yellow]Goal:[/] {self.last_goal}\n\n[green]{self.last_output[:800]}[/]"
+            if len(self.last_output) > 800:
+                content += f"\n[dim]... ({len(self.last_output)} chars total)[/]"
+        else:
+            content = "[dim]Waiting for first completed task…[/]"
+        return Panel(content, title="[bold]Latest Output[/]", border_style="green")
+
     def _build_layout(self) -> Layout:
         layout = Layout()
         layout.split_column(
-            Layout(name="top", size=12),
-            Layout(name="middle", size=12),
+            Layout(name="top", size=8),
+            Layout(name="status", size=7),
+            Layout(name="middle", size=10),
+            Layout(name="output", size=14),
             Layout(name="bottom"),
         )
         layout["top"].split_row(Layout(name="agents"), Layout(name="reputation"))
         layout["agents"].update(self._render_agents())
         layout["reputation"].update(self._render_reputation())
+        layout["status"].update(self._render_status())
         layout["middle"].update(self._render_packets())
+        layout["output"].update(self._render_output())
         layout["bottom"].update(self._render_log())
         return layout
 

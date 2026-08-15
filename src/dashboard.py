@@ -30,12 +30,13 @@ class Dashboard:
         self.recent_packets: deque[CXPPacket] = deque(maxlen=20)
         self.log_lines: deque[str] = deque(maxlen=MAX_LOG)
         self._lock = asyncio.Lock()
-        
-        # Telemetry
         self.task_stats = {"submitted": 0, "done": 0, "error": 0, "pending": 0}
         self.last_activity = datetime.now()
         self.llm_calls = 0
         self.reflect_rewrites = 0
+        # Last completed output for viewing
+        self.last_output: str = ""
+        self.last_goal: str = ""
 
     # ------------------------------------------------------------------ #
     # NATS listeners                                                       #
@@ -62,30 +63,29 @@ class Dashboard:
         async with self._lock:
             self.recent_packets.append(packet)
             self.last_activity = datetime.now()
-            
-            # Track stats
-            if packet.task_id:  # Only root task packets count
+
+            if packet.task_id:
                 if packet.status.value == "done":
                     self.task_stats["done"] += 1
                 elif packet.status.value == "error":
                     self.task_stats["error"] += 1
-                else:
-                    self.task_stats["pending"] += 1
-            
-            # Count LLM calls (executor packets)
+
             if packet.type.value == "code":
                 self.llm_calls += 1
-            
-            # Count reflect rewrites
+                if packet.status.value == "done" and packet.payload and packet.payload.output:
+                    self.last_output = packet.payload.output
+                    self.last_goal = packet.payload.goal or ""
+
             if packet.type.value == "reflect" and packet.status.value == "done":
                 self.reflect_rewrites += 1
-            
+
             icon = "✓" if packet.status.value == "done" else "✗" if packet.status.value == "error" else "⟳"
             ts = datetime.now().strftime("%H:%M:%S")
             score = f" score={packet.quality_score:.2f}" if packet.quality_score is not None else ""
+            goal_snippet = f" — {(packet.payload.goal or '')[:50]}" if packet.payload and packet.payload.goal else ""
             self.log_lines.append(
-                f"[dim]{ts}[/] {icon} [{packet.type.value}] {packet.id[:8]} "
-                f"cap={packet.capability}{score}"
+                f"[dim]{ts}[/] {icon} [bold]{packet.type.value}[/] {packet.id[:8]} "
+                f"cap={packet.capability}{score}[dim]{goal_snippet}[/]"
             )
 
     # ------------------------------------------------------------------ #
@@ -167,12 +167,23 @@ class Dashboard:
         lines = "\n".join(self.log_lines)
         return Panel(lines or "[dim]Waiting for activity…[/]", title="[bold]Live Log[/]", border_style="yellow")
 
+    def _render_output(self) -> Panel:
+        """Show the latest generated artifact."""
+        if self.last_output:
+            content = f"[bold yellow]Goal:[/] {self.last_goal}\n\n[green]{self.last_output[:800]}[/]"
+            if len(self.last_output) > 800:
+                content += f"\n[dim]... ({len(self.last_output)} chars total)[/]"
+        else:
+            content = "[dim]Waiting for first completed task…[/]"
+        return Panel(content, title="[bold]Latest Output[/]", border_style="green")
+
     def _build_layout(self) -> Layout:
         layout = Layout()
         layout.split_column(
             Layout(name="top", size=8),
             Layout(name="status", size=7),
             Layout(name="middle", size=10),
+            Layout(name="output", size=14),
             Layout(name="bottom"),
         )
         layout["top"].split_row(Layout(name="agents"), Layout(name="reputation"))
@@ -180,6 +191,7 @@ class Dashboard:
         layout["reputation"].update(self._render_reputation())
         layout["status"].update(self._render_status())
         layout["middle"].update(self._render_packets())
+        layout["output"].update(self._render_output())
         layout["bottom"].update(self._render_log())
         return layout
 

@@ -28,6 +28,16 @@ All agents communicate over **NATS JetStream** using **CXP packets** — typed, 
 
 ---
 
+## Hardware requirements
+
+- **Minimum:** 8GB RAM, 4-core CPU, 10GB disk (runs `qwen3:8b` comfortably)
+- **Better:** 16GB+ RAM, 8+ cores, 20GB+ disk (supports larger models + more replicas)
+- **Bigger models:** With 32GB+ GPU VRAM, can run `qwen2:70b` or `llama2:70b` for higher quality
+
+Models adapt to your hardware: edit `helm/cxp/values.yaml` to use different models per agent. Current setup uses `qwen3:8b` (8B parameters).
+
+---
+
 ## Quick start
 
 **Requirements:** Docker Desktop, kind, kubectl, helm
@@ -94,11 +104,11 @@ make test
 
 | Agent | Capability | Model | Role |
 |-------|-----------|-------|------|
-| planner | `plan` | qwen2.5:0.5b | Decomposes goals into sub-tasks |
-| executor ×2 | `code` | qwen2.5:1.5b | Generates artifacts |
-| verifier | `verify` | qwen2.5:0.5b | Scores output quality |
-| assessor | `assess` | qwen2.5:0.5b | Labels artifacts with capability tags |
-| reflect | `reflect` | qwen2.5:1.5b | Rewrites skill files on failure |
+| planner | `plan` | qwen3:8b | Decomposes goals into sub-tasks |
+| executor ×2 | `code` | qwen3:8b | Generates artifacts |
+| verifier | `verify` | qwen3:8b | Scores output quality |
+| assessor | `assess` | qwen3:8b | Labels artifacts with capability tags |
+| reflect | `reflect` | qwen3:8b | Rewrites skill files on failure |
 | dashboard | — | — | Terminal UI (`make dashboard`) |
 | web | — | — | Browser UI at http://localhost |
 

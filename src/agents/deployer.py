@@ -99,20 +99,31 @@ class DeployerAgent(AgentShell):
         if self._looks_like_yaml(artifact_stripped):
             log.debug("Detected YAML artifact")
             return await self._deploy_yaml(artifact_stripped)
-        elif artifact_stripped.startswith("def ") or "import " in artifact_stripped:
+        elif artifact_stripped.startswith("def ") or "import " in artifact_stripped or artifact_stripped.startswith("print("):
             log.debug("Detected Python artifact")
             return await self._run_python(artifact_stripped, goal)
+        elif artifact_stripped.startswith("#!/bin/bash") or artifact_stripped.startswith("#!/bin/sh"):
+            log.debug("Detected shell script — wrapping as Python subprocess")
+            py = f"import subprocess\nresult = subprocess.run(['bash','-c',{repr(artifact_stripped)}],capture_output=True,text=True,timeout=10)\nprint(result.stdout)\nif result.returncode != 0: raise RuntimeError(result.stderr)"
+            return await self._run_python(py, goal)
         else:
             log.warning(f"Unrecognized artifact type: {artifact_stripped[:100]}")
             return {"deployed": False, "reason": "unrecognized artifact type", "preview": artifact_stripped[:200]}
 
     def _extract_from_markdown(self, text: str) -> str:
-        """Extract code from markdown code blocks (```language ... ```)."""
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if len(lines) > 2 and lines[-1].strip() == "```":
-                # Extract everything between first and last line
-                return "\n".join(lines[1:-1]).strip()
+        """Extract code from the first markdown code block, ignoring trailing prose."""
+        if not text.startswith("```"):
+            return text
+        lines = text.split("\n")
+        # skip the opening ```language line
+        start = 1
+        end = None
+        for i in range(start, len(lines)):
+            if lines[i].strip() == "```":
+                end = i
+                break
+        if end is not None:
+            return "\n".join(lines[start:end]).strip()
         return text
 
     def _looks_like_yaml(self, text: str) -> bool:

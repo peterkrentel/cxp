@@ -149,16 +149,13 @@ class AgentShell(ABC):
             try:
                 full = await _stream(client)
             except httpx.HTTPStatusError as e:
-                if e.response.status_code != 404:
-                    raise
-                # Pull missing model then retry once
-                await self._think(f"  ⬇ Pulling model {OLLAMA_MODEL}…")
-                pull = await client.post(f"{OLLAMA_URL}/api/pull",
-                    json={"name": OLLAMA_MODEL, "stream": False},
-                    timeout=httpx.Timeout(600.0))
-                pull.raise_for_status()
-                await self._think(f"  ✓ Model pulled, retrying…")
-                full = await _stream(client)
+                if e.response.status_code == 404:
+                    raise RuntimeError(
+                        f"Model '{OLLAMA_MODEL}' not found in Ollama. "
+                        f"Available models must be pre-cached in PVC. "
+                        f"Auto-pull is disabled to prevent PostStartHook failures."
+                    )
+                raise
 
         await self._think(f"  ✓ response ({len(full)} chars): {full[:120]}…")
         return full

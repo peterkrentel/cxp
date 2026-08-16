@@ -80,19 +80,19 @@ agents:
   planner:
     replicas: 1
     role: planner
-    model: qwen2.5:0.5b   # fast — just needs to decompose tasks
+    model: qwen2.5:1.5b   # use cached model
   executor:
     replicas: 2
     role: executor
-    model: qwen2.5:1.5b   # quality output
+    model: qwen2.5:1.5b   # use cached model
   verifier:
     replicas: 1
     role: verifier
-    model: qwen2.5:0.5b   # fast — just needs to score
+    model: qwen2.5:1.5b   # use cached model
   reflect:
     replicas: 1
     role: reflect
-    model: qwen2.5:1.5b   # needs to reason about improvements
+    model: qwen2.5:1.5b   # use cached model
   dashboard:
     replicas: 1
     role: dashboard

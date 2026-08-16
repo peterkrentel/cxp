@@ -3,6 +3,7 @@
 
 import json
 import os
+import random
 import sys
 import time
 import urllib.request
@@ -57,23 +58,29 @@ def get_state() -> dict:
     return _http_get("/api/state")
 
 
-def wait_for_result(task_id: str, timeout=300) -> dict | None:
-    """Poll API until code+verify packets both land for this task_id."""
+def wait_for_results(task_ids: dict, timeout=480) -> dict:
+    """Poll until all tasks have code+verify done, or timeout. Returns {task_id: result}."""
     deadline = time.time() + timeout
-    while time.time() < deadline:
-        code_pkt = None
-        best_score = 0.0
-        for p in get_state().get("packets", []):
-            if p.get("task_id") != task_id:
-                continue
-            if p.get("type") == "code" and p.get("status") == "done" and p.get("output"):
-                code_pkt = p
-            if p.get("type") == "verify" and p.get("status") == "done":
-                best_score = max(best_score, p.get("score") or 0.0)
-        if code_pkt:
-            return {**code_pkt, "score": best_score}
-        time.sleep(5)
-    return None
+    results = {}
+    pending = set(task_ids.keys())
+    while time.time() < deadline and pending:
+        packets = get_state().get("packets", [])
+        for task_id in list(pending):
+            code_pkt = None
+            best_score = 0.0
+            for p in packets:
+                if p.get("task_id") != task_id:
+                    continue
+                if p.get("type") == "code" and p.get("status") == "done" and p.get("output"):
+                    code_pkt = p
+                if p.get("type") == "verify" and p.get("status") == "done":
+                    best_score = max(best_score, p.get("score") or 0.0)
+            if code_pkt:
+                results[task_id] = {**code_pkt, "score": best_score}
+                pending.discard(task_id)
+        if pending:
+            time.sleep(5)
+    return results
 
 
 def trigger_improvement(label: str, issues: list[str]):
@@ -135,45 +142,22 @@ TESTS = [
 ]
 
 
-def run_test(test: dict, attempt: int = 1) -> dict:
+def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]
-    goal = test["goal"]
-    print(f"\n{'='*60}")
-    print(f"[{label}] attempt {attempt}")
-    print(f"Goal: {goal}")
-    print(f"{'='*60}")
-
-    task_id = submit_task(goal)
-    if not task_id:
-        print("  ✗ Submission failed")
-        return {"label": label, "status": "FAIL", "reason": "submit failed"}
-    print(f"  ✓ Submitted: {task_id}")
-
-    result = wait_for_result(task_id)
     if not result:
-        return {"label": label, "status": "TIMEOUT", "task_id": task_id}
-
+        return {"label": label, "status": "TIMEOUT"}
     score = result.get("score") or 0
     output = result.get("output", "")
-    print(f"  Score: {score:.2f}  Output: {len(output)} chars")
-    if output:
-        print(f"  Preview: {output[:150]}...")
-
+    print(f"  [{label}] score={score:.2f}  {len(output)} chars")
     valid, issues = test["validator"](output)
     passed = valid and score >= test["threshold"]
-
-    if not passed and attempt == 1:
-        print(f"  ✗ FAILED — triggering self-improvement: {issues}")
-        trigger_improvement(label, issues)
-        time.sleep(15)
-        return run_test(test, attempt=2)
-
     return {
         "label": label,
         "status": "PASS" if passed else "WARN",
         "score": score,
         "attempt": attempt,
         "issues": issues,
+        "task_id": result.get("task_id"),
     }
 
 
@@ -186,10 +170,46 @@ def main():
     print("[TRACE] wait_for_ready() succeeded", flush=True)
 
     results = []
-    for test in TESTS:
-        r = run_test(test)
-        results.append(r)
-        time.sleep(3)
+    shuffled = random.sample(TESTS, len(TESTS))
+
+    # Submit all tests upfront so agents work in parallel
+    print("\nSubmitting all tests...")
+    task_map = {}  # task_id -> test
+    for test in shuffled:
+        task_id = submit_task(test["goal"])
+        if task_id:
+            task_map[task_id] = test
+            print(f"  ✓ [{test['label']}] submitted: {task_id}")
+        else:
+            results.append({"label": test["label"], "status": "FAIL", "reason": "submit failed"})
+
+    # Wait for all results together
+    print(f"\n⏳ Waiting for {len(task_map)} task(s)...")
+    result_map = wait_for_results(task_map, timeout=480)
+
+    # Evaluate and check for first-attempt failures needing retry
+    retry_map = {}
+    for task_id, test in task_map.items():
+        raw = result_map.get(task_id)
+        r = evaluate(test, raw, attempt=1)
+        if r["status"] != "PASS" and raw:
+            print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
+            trigger_improvement(r["label"], r["issues"])
+            retry_id = submit_task(test["goal"])
+            if retry_id:
+                retry_map[retry_id] = (test, r)
+        else:
+            results.append(r)
+
+    # Wait for retries together
+    if retry_map:
+        print(f"\n⏳ Waiting for {len(retry_map)} retry(s)...")
+        time.sleep(10)
+        retry_results = wait_for_results({tid: t for tid, (t, _) in retry_map.items()}, timeout=480)
+        for retry_id, (test, first_result) in retry_map.items():
+            raw = retry_results.get(retry_id)
+            r = evaluate(test, raw, attempt=2)
+            results.append(r)
 
     print(f"\n{'='*60}")
     print("RESULTS")
@@ -203,6 +223,44 @@ def main():
     passed = sum(1 for r in results if r["status"] == "PASS")
     print(f"\n{passed}/{len(results)} passed")
 
+    # Post-run analysis: identify patterns and submit targeted reflect tasks
+    failed = [r for r in results if r["status"] not in ("PASS",)]
+    if failed:
+        print(f"\n{'='*60}")
+        print("POST-RUN ANALYSIS")
+        print(f"{'='*60}")
+
+        # Group failures by type to identify systemic issues
+        timeouts = [r for r in failed if r["status"] == "TIMEOUT"]
+        low_score = [r for r in failed if r.get("score", 0) < 0.6 and r["status"] != "TIMEOUT"]
+        wrong_format = [r for r in failed if any("No function" in i or "No type" in i or "Invalid YAML" in i for i in r.get("issues", []))]
+
+        if timeouts:
+            labels = ", ".join(r["label"] for r in timeouts)
+            print(f"  ⚠ Timeouts detected ({labels}) — agents may be overloaded or LLM slow")
+            trigger_improvement("TIMEOUT", [f"Tests timed out: {labels}. Consider if planner is creating too many subtasks."])
+
+        if wrong_format:
+            labels = ", ".join(r["label"] for r in wrong_format)
+            all_issues = [i for r in wrong_format for i in r.get("issues", [])]
+            print(f"  ⚠ Format failures ({labels}): {all_issues[:3]}")
+            trigger_improvement("FORMAT", all_issues[:3])
+
+        if low_score and not wrong_format:
+            labels = ", ".join(r["label"] for r in low_score)
+            print(f"  ⚠ Low quality scores ({labels}) — verifier found issues")
+            issues = [i for r in low_score for i in r.get("issues", [])]
+            trigger_improvement("QUALITY", issues[:3] or [f"Low scores on: {labels}"])
+
+        if not timeouts and not wrong_format and not low_score:
+            for r in failed:
+                print(f"  ⚠ {r['label']}: {r.get('reason', r['status'])}")
+                trigger_improvement(r["label"], [r.get("reason", "unknown failure")])
+
+        print(f"\n  → {len(failed)} reflect task(s) submitted — next run should improve")
+    else:
+        print("\n✓ All tests passed — no reflect tasks needed")
+
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
     os.makedirs(results_dir, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -210,6 +268,24 @@ def main():
     with open(out_file, "w") as f:
         json.dump({"timestamp": ts, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
     print(f"\nResults saved: tests/results/run_{ts}.json")
+
+    # Auto-cleanup: delete job on success, keep for debugging on failure
+    if passed == len(results):
+        try:
+            import subprocess
+            job_name = os.environ.get("JOB_NAME", "")
+            namespace = os.environ.get("POD_NAMESPACE", "cxp")
+            if job_name:
+                result = subprocess.run(
+                    ["kubectl", "delete", "job", job_name, "-n", namespace],
+                    capture_output=True, timeout=10
+                )
+                if result.returncode == 0:
+                    print(f"✓ Cleaned up job: {job_name}")
+                else:
+                    print(f"  Note: Could not auto-delete job (ok for local dev)")
+        except Exception as e:
+            print(f"  Note: Job cleanup skipped ({type(e).__name__})")
 
 
 if __name__ == "__main__":

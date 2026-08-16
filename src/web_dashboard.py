@@ -73,8 +73,6 @@ async def subscribe_nats():
                 state["stats"]["tasks_done"] += 1
             elif packet.status.value == "error":
                 state["stats"]["tasks_error"] += 1
-            if packet.type.value == "code":
-                state["stats"]["llm_calls"] += 1
             if packet.type.value == "reflect":
                 state["stats"]["reflects"] += 1
             state["last_activity"] = datetime.now().isoformat()
@@ -84,12 +82,15 @@ async def subscribe_nats():
     async def on_thinking(msg):
         try:
             data = json.loads(msg.data)
+            text = data.get("text", "")
             state["thinking"].append({
                 "ts": datetime.now().strftime("%H:%M:%S"),
                 "agent": data.get("agent", "?"),
-                "text": data.get("text", ""),
+                "text": text,
                 "stream": data.get("stream", False),
             })
+            if "⟳ LLM" in text:
+                state["stats"]["llm_calls"] += 1
         except Exception as e:
             log.warning(f"Thinking packet error: {e}")
 

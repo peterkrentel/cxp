@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from ..agent_shell import AgentShell
 from ..packet import CXPPacket
+
+log = logging.getLogger(__name__)
 
 SKILLS_DIR = Path(os.environ.get("CXP_SKILLS_DIR", "/skills"))
 
@@ -23,9 +26,9 @@ class ReflectAgent(AgentShell):
         super().__init__("reflect-1", capabilities=["reflect"])
 
     async def _execute(self, packet: CXPPacket) -> str:
-        # determine which skill file to improve based on context
         skill_file = SKILLS_DIR / "executor_v1.md"
         current = skill_file.read_text() if skill_file.exists() else "(no existing skill)"
+        log.info("[reflect] skill_file=%s exists=%s instructions=%s", skill_file, skill_file.exists(), packet.payload.instructions[:80])
 
         prompt = (
             f"Current skill file:\n{current}\n\n"

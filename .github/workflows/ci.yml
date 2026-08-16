@@ -1,0 +1,68 @@
+name: CI — deploy validation
+
+# Infrastructure-only gate: does the Helm chart actually deploy cleanly in a
+# real Kubernetes cluster? Does NOT run the LLM test suite or pull any Ollama
+# models — that stays the in-cluster hourly CronJob's job. A small local
+# model is inherently non-deterministic (confirmed repeatedly in this
+# project's own history), and a PR gate that can fail for reasons unrelated
+# to the actual code change erodes trust in the gate fast. This workflow
+# instead catches the class of bug that already bit this project several
+# times: RBAC misconfiguration, resource-limit typos, bad image references,
+# template mistakes — things that are deterministic and worth blocking a
+# merge on.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: cxp-ci
+          wait: 120s
+
+      - name: helm lint
+        run: helm lint helm/cxp
+
+      - name: helm template (catches rendering errors even lint misses)
+        run: helm template cxp helm/cxp > /tmp/rendered.yaml
+
+      - name: Deploy the chart
+        run: |
+          kubectl create namespace cxp
+          # Charts/*.tgz + Chart.lock are already committed — no
+          # `helm dependency update` needed, and skipping it avoids CI
+          # depending on chart-repo availability.
+          helm install cxp helm/cxp --namespace cxp
+
+      - name: Wait for every pod to become Ready
+        run: |
+          echo "Waiting up to 8 minutes for all cxp pods to be Ready..."
+          kubectl wait --for=condition=Ready pods --all -n cxp --timeout=480s
+
+      - name: Show final pod state
+        if: always()
+        run: |
+          kubectl get pods -n cxp -o wide
+          kubectl get pvc -n cxp
+          kubectl get cronjob -n cxp
+
+      - name: Dump pod logs and describe on failure
+        if: failure()
+        run: |
+          for p in $(kubectl get pods -n cxp -o name); do
+            echo "=== describe $p ==="
+            kubectl describe "$p" -n cxp || true
+            echo "=== logs $p ==="
+            kubectl logs "$p" -n cxp --all-containers --prefix || true
+          done

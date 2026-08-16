@@ -356,9 +356,14 @@ def main():
     # Tier 0: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
+    # Timeout is 240s, not the original 120s: smoke is always the FIRST
+    # request of every run, so it's the one most likely to catch Ollama
+    # cold (model unloaded since the last cycle) — a short timeout paired
+    # with the worst timing made it the most fragile test, not the most
+    # forgiving one, which is backwards for a health check.
     print("\nRunning smoke test (pipeline health check)...")
     smoke_task_id = submit_task(SMOKE_TEST["goal"])
-    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=120) if smoke_task_id else {}
+    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=240) if smoke_task_id else {}
     smoke_eval = evaluate(SMOKE_TEST, smoke_result.get(smoke_task_id), attempt=1)
     if smoke_eval["status"] != "PASS":
         print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "

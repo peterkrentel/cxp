@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
+log = logging.getLogger(__name__)
 
 BASE_SYSTEM = """You are a task planner in a distributed AI swarm.
 Given a high-level goal, decompose it into 2-5 focused sub-tasks.
@@ -37,7 +39,16 @@ class PlannerAgent(AgentShell):
         # strict JSON rejects that outright, strict=False tolerates it.
         # Doesn't fix every malformation this model produces (missing
         # delimiters, truncated output), just this specific recurring class.
-        sub_tasks: list[dict] = json.loads(raw, strict=False)
+        # A malformed decomposition used to crash _execute() uncaught, which
+        # halts the ENTIRE swarm over one goal's LLM hiccup -- verifier
+        # already degrades gracefully on the same failure (see its own
+        # JSONDecodeError handling); planner should too, rather than being
+        # the one agent whose bad output blocks everyone else's work.
+        try:
+            sub_tasks: list[dict] = json.loads(raw, strict=False)
+        except json.JSONDecodeError as e:
+            log.error(f"Failed to parse planner response: {e}\nRaw: {raw[:200]}")
+            return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
         for task in sub_tasks:
             type_str = task.get("type", "code")

@@ -121,9 +121,10 @@ async def submit_task(request: Request):
         return JSONResponse({"error": "goal required"}, status_code=400)
     # allow callers (e.g. test runner) to target a specific capability directly
     capability = body.get("capability", "plan")
+    # Map capability to packet type. assess/deploy/etc route by capability name in NATS, not by type
     type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
                 "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
-                "assess": PacketType.ASSESS, "deploy": PacketType.DEPLOY}
+                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
     ptype = type_map.get(capability, PacketType.PLAN)
     packet = CXPPacket(
         origin="web-ui",
@@ -167,8 +168,9 @@ button:hover { background: #0f0; color: #000; }
 #submit-status { color: #888; font-size: 11px; min-width: 120px; }
 tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
 .resizable { resize: vertical; overflow: auto; min-height: 80px; }
-.drag-handle { height: 4px; background: #1a6600; cursor: ns-resize; margin: 2px 0; }
-.drag-handle:hover { background: #0f0; }
+.drag-handle { height: 12px; background: linear-gradient(to bottom, #1a6600 0%, #00ff00 50%, #1a6600 100%); cursor: ns-resize; margin: 4px 0; display: flex; align-items: center; justify-content: center; user-select: none; }
+.drag-handle::after { content: '⋮'; color: #0f0; font-size: 14px; font-weight: bold; }
+.drag-handle:hover { background: linear-gradient(to bottom, #00ff00 0%, #00ff00 50%, #00ff00 100%); }
 </style>
 </head>
 <body>
@@ -305,31 +307,34 @@ async function refresh() {
 (function(){
   const handle = document.getElementById('output-drag');
   if (!handle) return;
-  let dragging = false, startY, startH;
+  let dragging = false, startY, startOutH, startMidH;
+  const outWrap = document.getElementById('out-wrap');
+  const mid = document.getElementById('mid-row');
+  
   handle.addEventListener('mousedown', e => {
-    dragging = true; startY = e.clientY;
-    startH = document.getElementById('out-wrap').offsetHeight;
+    dragging = true;
+    startY = e.clientY;
+    startOutH = outWrap.offsetHeight;
+    startMidH = mid.offsetHeight;
+    handle.style.background = 'linear-gradient(to bottom, #00ff00 0%, #ffff00 50%, #00ff00 100%)';
     e.preventDefault();
   });
+  
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
-    document.getElementById('out-wrap').style.maxHeight = Math.max(80, startH + e.clientY - startY) + 'px';
+    const delta = startY - e.clientY;
+    const newOutH = Math.max(80, startOutH + delta);
+    const newMidH = Math.max(100, startMidH - delta);
+    outWrap.style.maxHeight = newOutH + 'px';
+    mid.style.height = newMidH + 'px';
   });
-  document.addEventListener('mouseup', () => dragging = false);
-
-  // Drag to resize mid row (packets/thinking height)
-  const mid = document.getElementById('mid-row');
-  let mDrag = false, mStartY, mStartH;
-  mid.addEventListener('mousedown', e => {
-    if (e.target.tagName === 'DIV' && e.offsetY > mid.offsetHeight - 8) {
-      mDrag = true; mStartY = e.clientY; mStartH = mid.offsetHeight; e.preventDefault();
+  
+  document.addEventListener('mouseup', () => {
+    if (dragging) {
+      dragging = false;
+      handle.style.background = 'linear-gradient(to bottom, #1a6600 0%, #00ff00 50%, #1a6600 100%)';
     }
   });
-  document.addEventListener('mousemove', e => {
-    if (!mDrag) return;
-    mid.style.height = Math.max(100, mStartH + e.clientY - mStartY) + 'px';
-  });
-  document.addEventListener('mouseup', () => mDrag = false);
 })();
 
 setInterval(refresh, 2000);

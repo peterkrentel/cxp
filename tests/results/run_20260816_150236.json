@@ -1,0 +1,51 @@
+{
+  "timestamp": "20260816_150236",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1ff8b288): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    }
+  ]
+}

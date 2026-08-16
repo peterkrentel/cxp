@@ -22,6 +22,19 @@ ollama:
   persistentVolume:
     enabled: true
     size: 10Gi
+  # Previously unset — Ollama had zero resource limits and was observed
+  # running TWO llama_server runner processes (one per loaded model)
+  # simultaneously consuming ~470% CPU EACH, on a 10-core node already
+  # sitting at a load average of 25. That's not "small model is slow" —
+  # it's Ollama unboundedly starving everything else, including itself
+  # (confirmed: "timed out waiting for llama runner to start: context
+  # canceled" — a new runner failed to even start in time under the load,
+  # producing real 500s, not just latency).
+  resources:
+    requests: { cpu: "2", memory: "2Gi" }   # guaranteed baseline, wins scheduling priority
+    limits:   { cpu: "5", memory: "4Gi" }   # hard cap — was able to take ~9.4 of 10 cores unbounded
+  extraEnv:
+    - { name: OLLAMA_NUM_PARALLEL, value: "2" }   # default 4 — halves per-runner thread footprint within the new CPU budget
 
 ## --------------------------------------------------------------------------- #
 ## NATS sub-chart overrides                                                     #

@@ -16,6 +16,8 @@ sync:
 	cp src/agents/*.py $(CHART)/app/src/agents/
 	cp main.py $(CHART)/app/main.py
 	cp requirements.txt $(CHART)/app/requirements.txt
+	mkdir -p $(CHART)/app/tests
+	cp tests/run_tests.py $(CHART)/app/tests/run_tests.py
 
 # Destroy release but keep memory PVC
 destroy:

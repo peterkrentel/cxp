@@ -59,6 +59,7 @@ async def subscribe_nats():
             log.info(f"✓ Result packet: {packet.id[:8]} (cap={packet.capability}, status={packet.status})")
             state["packets"].append({
                 "id": packet.id[:8],
+                "task_id": packet.task_id,
                 "type": packet.type.value,
                 "capability": packet.capability,
                 "status": packet.status.value,

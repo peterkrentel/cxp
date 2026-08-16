@@ -38,16 +38,16 @@ spec:
                 - sh
                 - -c
                 - |
-                  python /app/tests/run_tests.py
+                  python -u /app/tests/run_tests.py
                   # Push results to git if credentials are available
                   if [ -f /git-creds/token ] && [ -f /git-creds/repo ]; then
-                    cd /results
-                    git config user.email "cxp-bot@localhost"
-                    git config user.name "CXP Test Runner"
+                    cd /app
+                    git init -q && git config user.email "cxp-bot@localhost" && git config user.name "CXP Test Runner"
                     REPO=$(cat /git-creds/repo)
                     TOKEN=$(cat /git-creds/token)
-                    git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git" 2>/dev/null || true
-                    git add tests/results/ && git commit -m "test results $(date +%Y%m%d_%H%M)" && git push || true
+                    git remote add origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git" 2>/dev/null || true
+                    git fetch origin main --depth=1 2>/dev/null || true
+                    git add tests/results/ && git commit -m "test results $(date +%Y%m%d_%H%M)" && git push origin HEAD:main || true
                   fi
               env:
                 - { name: NATS_URL,        value: "{{ $.Values.natsUrl }}" }

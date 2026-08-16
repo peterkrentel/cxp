@@ -157,6 +157,38 @@ def validate_always(_artifact: str) -> tuple[bool, list[str]]:
     return True, []
 
 
+def validate_has_tests(code: str) -> tuple[bool, list[str]]:
+    """TESTING: does the artifact include actual test code, not just the
+    function it's meant to test?"""
+    code = _strip_markdown(code)
+    issues = []
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    if "def test_" not in code and code.count("assert ") < 2:
+        issues.append("No dedicated test function or assertions found")
+    return len(issues) == 0, issues
+
+
+def validate_has_docstring(code: str) -> tuple[bool, list[str]]:
+    """DOCUMENTATION: is there a real docstring, not just a comment or
+    nothing at all, and does it cover the basics a caller would need?"""
+    code = _strip_markdown(code)
+    issues = []
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    if '"""' not in code and "'''" not in code:
+        return False, ["No docstring found"]
+    lowered = code.lower()
+    missing = [kw for kw in ("return", "example") if kw not in lowered]
+    if missing:
+        issues.append(f"Docstring missing expected sections: {missing}")
+    return len(issues) == 0, issues
+
+
 TESTS = [
     {
         "label": "CODE_GENERATION",
@@ -194,6 +226,18 @@ TESTS = [
         "label": "INFRA_AS_CODE",
         "goal": "generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits",
         "validator": validate_infra_yaml,
+        "threshold": 0.70,
+    },
+    {
+        "label": "TESTING",
+        "goal": "write a Python function that calculates the factorial of a number, plus unit tests covering zero, one, and a typical positive input",
+        "validator": validate_has_tests,
+        "threshold": 0.70,
+    },
+    {
+        "label": "DOCUMENTATION",
+        "goal": "write a Python function for binary search over a sorted list, with a comprehensive docstring covering parameters, return value, and an example usage",
+        "validator": validate_has_docstring,
         "threshold": 0.70,
     },
 ]

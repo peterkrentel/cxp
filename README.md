@@ -2,6 +2,8 @@
 
 A self-improving distributed AI swarm: small local LLMs (via Ollama) passing structured packets through a routing layer, testing themselves hourly, and rewriting their own skill files when they fail. Prototype — built to explore the pattern, not production-hardened.
 
+> **Naming note:** "Protocol" is aspirational right now. What exists is a well-defined internal message *schema* (`src/packet.py`'s `CXPPacket`) that this one Python codebase uses to talk to itself across pods — there's no spec independent of that class, no schema version number, and nothing outside this repo has ever produced or consumed a CXP packet. See [docs/architecture.md](docs/architecture.md#is-this-actually-a-protocol) for what it'd take to actually earn the name.
+
 ---
 
 ## How it works

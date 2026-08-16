@@ -157,3 +157,35 @@ flowchart LR
 ```
 
 Before this, publish was fire-and-forget core NATS pub/sub: a packet published while no replica happened to be subscribed (mid-rollout, restart) was simply gone, with no record it ever existed. Redelivery here is deliberately narrow — it rescues a packet whose delivery attempt never *finished*, not a packet whose processing *failed*. Failures are the halt gate's job; acking on every exit path (including halted-drop and bad-packet paths) prevents a genuinely-failed packet from redelivering forever and spamming the same error.
+
+## Is this actually a protocol?
+
+Honestly: not yet. "CXP — Context Exchange Protocol" describes the ambition more than the current reality. What exists today is `src/packet.py`'s `CXPPacket` — a Pydantic model this one codebase uses internally. It's a genuinely reasonable *schema* (typed, self-tracing via `TraceEntry`, carries its own status/TTL), but it isn't a *protocol* by the usual bar for that word:
+
+- **No spec independent of the implementation.** The only definition of a CXP packet is the Python class itself. Nothing describes the wire format in a way another language could implement against without reading `packet.py`.
+- **No version number.** If `Payload` gains or drops a field, there's no mechanism for an old and new packet to declare compatibility, or for a consumer to know which shape it's looking at.
+- **No second implementation.** Nothing outside this repo has ever produced or consumed a CXP packet. A protocol with exactly one participant is just an internal format.
+
+### If this became a real spec (future idea, not built)
+
+The concrete path, sketched here rather than implemented, since it's a real chunk of work not blocking anything today:
+
+1. **A standalone spec document** (`docs/protocol-spec.md`), independent of Python — field names, types, required vs. optional, and semantics, written the way you'd document a wire format for someone who will never see the Pydantic source. Something like:
+
+   ```
+   CXP Packet v1
+   {
+     id: string (uuid)              — unique per packet
+     schema_version: string          — "1.0" — NEW field, doesn't exist today
+     type: enum(plan|code|verify|reflect|assess|deploy|memory|route)
+     capability: string              — routing key, matches "cxp.cap.<capability>"
+     status: enum(pending|in_progress|done|error)
+     payload: { goal, context, instructions, inputs, output, error_detail }
+     trace: [{ agent, action, timestamp, notes }]
+   }
+   ```
+
+2. **A `schema_version` field on `CXPPacket` itself**, so a future breaking change to `Payload` can be detected and handled (or rejected) by a consumer instead of silently misinterpreted.
+3. **One real external consumer** — even something trivial, like a 20-line script in a different language that constructs a valid packet from the spec alone (no access to `packet.py`) and publishes it to `cxp.cap.plan`, then reads back a result. That's the actual bar for "protocol": something other than this codebase can speak it.
+
+None of this is needed for the swarm to keep working — it's purely about whether the name matches the artifact. Worth doing if CXP is ever meant to be adopted by anything outside this repo; not worth doing just for its own sake.

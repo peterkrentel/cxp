@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import nats
 from nats.aio.client import Client as NATSClient
+from nats.js import api
 from nats.js.errors import BadRequestError, NotFoundError
 
 from .memory import get_store
@@ -215,8 +216,15 @@ class AgentShell(ABC):
             subject = f"cxp.cap.{cap}"
             durable = f"cxp-{cap}"
             js = self._nc.jetstream()
-            await js.subscribe(subject, durable=durable, queue=durable, cb=handle, manual_ack=True)
-            log.info("[%s] listening on %s (durable=%s)", self.agent_id, subject, durable)
+            # ack_wait must exceed the slowest legitimate _execute() call, or
+            # JetStream redelivers a message to another replica while the
+            # first is still (slowly) processing it — not lost, but
+            # processed twice. Default is 30s; LLM calls under contention
+            # have taken 3-4 minutes, so this needs real headroom.
+            config = api.ConsumerConfig(ack_wait=300)
+            await js.subscribe(subject, durable=durable, queue=durable, cb=handle,
+                                manual_ack=True, config=config)
+            log.info("[%s] listening on %s (durable=%s, ack_wait=300s)", self.agent_id, subject, durable)
 
         await self._emit_status("idle")
         while True:

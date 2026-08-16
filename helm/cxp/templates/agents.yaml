@@ -70,7 +70,7 @@ spec:
           args: ["{{ if eq $cfg.role "dashboard" }}idle{{ else }}{{ $cfg.role }}{{ end }}"]
           env:
             - { name: NATS_URL,       value: "{{ $.Values.natsUrl }}" }
-            - { name: OLLAMA_URL,     value: "{{ $.Values.ollamaUrl }}" }
+            - { name: OLLAMA_URL,     value: "{{ if eq $name "assessor" }}{{ $.Values.ollamaSmallUrl }}{{ else }}{{ $.Values.ollamaUrl }}{{ end }}" }
             - { name: OLLAMA_MODEL,   value: "{{ if $cfg.model }}{{ $cfg.model }}{{ else }}{{ $.Values.ollamaModel }}{{ end }}" }
             - { name: CXP_SKILLS_DIR, value: /skills }
             - { name: CXP_MEMORY_PATH,value: /data/memory.json }

@@ -48,7 +48,7 @@ If any agent hits an unhandled error, the swarm **halts swarm-wide** — new tas
 
 ## Hardware requirements
 
-- **Realistic minimum: 10-core CPU, 8GB RAM, 10GB disk.** This isn't a conservative guess — it's what this project has actually been run on. Ollama alone was observed running two loaded-model runner processes simultaneously at ~470% CPU *each* (nearly the entire node) before resource limits were added; on anything smaller, expect the same contention (timeouts, even real `500` errors from Ollama itself under load) that this project hit and fixed. `helm/cxp/values.yaml`'s `ollama.resources` now caps it at 5 CPU / 4Gi — tune that down only if you also reduce how many agents/models are in play.
+- **Realistic minimum: 10-core CPU, 8GB RAM, 10GB disk.** This isn't a conservative guess — it's what this project has actually been run on. Ollama alone was observed running two loaded-model runner processes simultaneously at ~470% CPU *each* (nearly the entire node) before resource limits were added; on anything smaller, expect the same contention (timeouts, even real `500` errors from Ollama itself under load) that this project hit and fixed. There are now **two Ollama instances**, split by model rather than shared: the main one (`qwen2.5:1.5b`, serving planner/executor/verifier/reflect) capped at 3.5 CPU/3Gi, and a smaller dedicated one (`qwen2.5:0.5b`, `assessor` only) at 1.5 CPU/1.5Gi — combined, about the same total budget the single shared instance had before, just no longer colliding when `assessor` and `reflect` fire at the same instant (which happens on every single verifier pass). Tune down only if you also reduce how many agents/models are in play.
 - Current setup uses `qwen2.5:1.5b` (assessor uses the smaller `qwen2.5:0.5b`) — small models chosen to run comfortably on modest hardware, at the cost of occasionally malformed JSON output (planner is the most sensitive to this).
 - Bigger/better models: edit `helm/cxp/values.yaml` per-agent `model:` field; any Ollama-compatible model works. Check actual headroom first (`docker exec <kind-node> sh -c 'nproc; free -h'`) — a bigger model needs more of both, on top of what's already tightly budgeted here.
 
@@ -193,7 +193,7 @@ helm/cxp/
                          Kept manually in sync with the top-level copies; nothing
                          enforces that automatically, so edit both or diff before
                          deploying if you're not using `make deploy`.
-  Chart.yaml             nats + ollama + traefik sub-charts
+  Chart.yaml             nats + ollama (×2, aliased ollama-small for assessor) + traefik sub-charts
   values.yaml            per-agent model config, replicas, storage
   templates/
     agents.yaml          Deployments — python:3.12-slim + init container code assembly

@@ -39,7 +39,8 @@ graph TB
         Reflect[reflect ×1]
         Deployer[deployer ×1<br/>+ kubectl binary]
 
-        Ollama[[Ollama<br/>qwen2.5:1.5b / 0.5b]]
+        Ollama[[Ollama<br/>qwen2.5:1.5b]]
+        OllamaSmall[[Ollama-small<br/>qwen2.5:0.5b]]
         Memory[("memory.json<br/>PVC, ReadWriteOnce")]
     end
 
@@ -57,6 +58,7 @@ graph TB
     Executor --> Ollama
     Verifier --> Ollama
     Reflect --> Ollama
+    Assessor --> OllamaSmall
 
     Planner -->|emits code packets| Stream
     Executor -->|emits verify packet| Stream
@@ -75,6 +77,7 @@ graph TB
 **Notes:**
 - `deployer` is the only pod with a `kubectl` binary (downloaded at init time) and a ServiceAccount — via a Role/RoleBinding — scoped only to `cxp-sandbox`. It cannot touch the `cxp` namespace the agents run in.
 - The memory PVC is `ReadWriteOnce`. That's only safe because the kind cluster is single-node; a real multi-node cluster would need `ReadWriteMany` or the KV-store pattern used for skills instead.
+- **Two Ollama instances, split by model, not one shared instance.** `assessor` is the only agent on `qwen2.5:0.5b`, so it gets its own dedicated instance (`Ollama-small`, ~1.5 CPU/1.5Gi limit) separate from the one serving everyone else's `qwen2.5:1.5b` (~3.5 CPU/3Gi limit, shrunk from the single instance's earlier 5 CPU/4Gi so total demand stays about the same). Why: `verifier` fans out to `assessor` and `reflect` *simultaneously* on every single pass — two different models, same instant — and that pair kept colliding on one shared CPU allocation even after the single-instance resource limits were added. Two instances means that concurrent pair lands on two separate processes instead of queueing behind each other. Not "one Ollama per agent" (ruled out — six agents' worth of loaded models would need ~9GB against a 7.7GB-total node); just splitting by which model is actually in play.
 - "reputation, always" in the diagram is a simplification: every agent writes reputation on every packet (`record_success`/`record_failure`), but only `verifier` writes the structured `episodic` entries (`{capability, skill_revision, score, goal}`) used for regression detection, and only `reflect`/`assessor` write `semantic` facts (free-text notes). Same file (`memory.json`), three different record types, written by different agents.
 
 ## 2. One task, start to finish

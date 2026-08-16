@@ -7,9 +7,13 @@ kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit "GOAL"
 
 Each test has a label — what AI capability it evaluates. Score > 0.8 = pass.
 
+**Automation status matters here** — it's easy to assume everything below runs automatically; it doesn't. `tests/run_tests.py`'s hourly CronJob currently automates 8 of these 9 (marked **Automated** below), plus a Tier-0 smoke test ("print hello world", not listed here since it's not capability-specific) and a regression check comparing each run's scores against recent history. The rest are marked **Manual only** — real scenarios worth trying by hand, but nothing currently submits them on a schedule.
+
 ---
 
 ## CODE_GENERATION — basic output quality
+
+**Automated** (hourly CronJob)
 
 ```
 write a Python function that adds two numbers with type hints and docstring
@@ -21,6 +25,8 @@ write a Python function that adds two numbers with type hints and docstring
 
 ## ERROR_HANDLING — robustness patterns
 
+**Automated** (hourly CronJob)
+
 ```
 write a Python function that reads a JSON file and returns a dict, handling file not found and JSON decode errors
 ```
@@ -30,6 +36,8 @@ write a Python function that reads a JSON file and returns a dict, handling file
 ---
 
 ## STRUCTURED_OUTPUT — multi-section generation
+
+**Automated** (hourly CronJob)
 
 ```
 generate a Kubernetes Deployment manifest for a Node.js API with health checks, resource limits, and non-root security context
@@ -41,31 +49,38 @@ generate a Kubernetes Deployment manifest for a Node.js API with health checks, 
 
 ## DECOMPOSITION — planner quality
 
+**Automated** (hourly CronJob) — same goal text as below, but checks sub-task *count* only (≥3, relaxed from the "5+" expectation here — too strict for the small local planner model), not artifact quality
+
 ```
 scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README
 ```
 **Expect:** Planner breaks into 5+ sub-tasks (API code, DB model, Docker, tests, docs)
-**Self-improve trigger:** Missing test sub-task → verifier scores < 0.7 → planner skill updated
+**Self-improve trigger:** Missing test sub-task → verifier scores < 0.7 → reflect fires, but note it only ever rewrites the `executor` skill (hardcoded `SKILL_TARGET` in `reflect.py`) — planner's own skill file is never actually updated by anything today, despite the failure originating in planner's decomposition
 
 ---
 
 ## SELF_IMPROVEMENT — reflect loop visible
 
+**Manual only** — doesn't fit the automated suite's pass/fail shape
+
 Run this 3 times in a row and watch the executor skill file evolve:
 ```
 generate a Python class for a rate limiter with per-user limits, thread safety, and logging
 ```
-**Expect:** Run 1 might miss thread safety. Verifier scores 0.6. Reflect rewrites executor_v1.md.
+**Expect:** Run 1 might miss thread safety. Verifier scores 0.6. Reflect rewrites the `executor` skill.
 Run 2 includes thread safety. Score 0.85.
 
-Check skill evolution:
+Check skill evolution — the live skill lives in NATS JetStream KV, not a file (the ConfigMap-seeded `/skills/executor_v1.md` is only the fallback used before the very first reflect write):
 ```bash
-kubectl exec -n cxp deploy/cxp-dashboard -- cat /skills/executor_v1.md
+kubectl exec -n cxp deploy/cxp-nats-box -- nats kv get cxp-skills executor
+kubectl exec -n cxp deploy/cxp-nats-box -- nats kv history cxp-skills executor
 ```
 
 ---
 
 ## INFRA_AS_CODE — real-world DevOps
+
+**Automated** (hourly CronJob)
 
 ```
 generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits
@@ -76,6 +91,8 @@ generate a Helm values.yaml for a production Redis cluster with persistence, aut
 
 ## SECURITY_AWARENESS — verifier catches risks
 
+**Automated** (hourly CronJob) — pass means the verifier *flagged* a risk (checked via keyword match on its issues text), not that the artifact scored well; "no risk flagged" is the failure mode
+
 ```
 generate a Python web scraper that downloads URLs from user input and saves to disk
 ```
@@ -84,7 +101,33 @@ generate a Python web scraper that downloads URLs from user input and saves to d
 
 ---
 
+## TESTING — does the artifact include actual tests
+
+**Automated** (hourly CronJob) — not sourced from this doc originally; added directly to `run_tests.py` to complete capability-label coverage
+
+```
+write a Python function that calculates the factorial of a number, plus unit tests covering zero, one, and a typical positive input
+```
+**Expect:** A dedicated `test_` function or at least 2 `assert` statements — not just the function under test with no tests at all
+**Self-improve trigger:** No test code found → verifier likely scores low → reflect fires
+
+---
+
+## DOCUMENTATION — real docstrings, not just code
+
+**Automated** (hourly CronJob) — not sourced from this doc originally; added directly to `run_tests.py` to complete capability-label coverage
+
+```
+write a Python function for binary search over a sorted list, with a comprehensive docstring covering parameters, return value, and an example usage
+```
+**Expect:** A real docstring (not just a `#` comment) mentioning the return value and an example — the validator does a literal keyword check for "return"/"example" in the text, so it can false-negative on a docstring that covers the same ground with different wording
+**Self-improve trigger:** No docstring, or missing those sections → reflect fires
+
+---
+
 ## MULTI_AGENT_PARALLELISM — executor scaling
+
+**Manual only** — an operational demo (scaling replicas, watching the dashboard), not something with a pass/fail shape
 
 Scale executors to 4 first:
 ```bash
@@ -102,6 +145,8 @@ done
 ---
 
 ## REPUTATION_ROUTING — best agent wins
+
+**Manual only** — an observability check against `memory.json`, not a gradeable test
 
 Submit 10 tasks of the same type. After ~5, reputation scores settle.
 Check which executor has highest score:

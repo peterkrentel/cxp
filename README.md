@@ -116,21 +116,23 @@ curl -X POST http://localhost/api/halt/clear
 
 ## Autonomous testing
 
-A **CronJob** runs the test suite hourly inside the cluster:
-- Submits 3 test tasks (CODE_GENERATION, ERROR_HANDLING, STRUCTURED_OUTPUT)
-- Evaluates results against pass thresholds, retries failures once
-- Triggers the reflect loop on failures, categorized by timeout / format / quality (plus a catch-all for anything uncategorized)
-- Writes JSON results to `tests/results/`, then **clones and pushes** to `main` (a real fast-forward push now, not a disconnected `git init` that silently failed)
-- Deletes its own Job only *after* the push completes, and only if every test passed — keeps the job around for debugging on failure
+A **CronJob** runs the test suite hourly inside the cluster. Tests run in three tiers, fully sequentially (one task submitted at a time, waiting for it to settle before the next — running them concurrently piled up enough simultaneous LLM calls to blow past Ollama's read timeout):
+
+- **Tier 0 — smoke test.** One trivial task ("print hello world"), always first. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X" — but the suite still continues for more signal rather than aborting.
+- **Tier 1 — capability coverage.** 8 tests, one per [assessor capability label](#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. Each retries once on failure, and failures trigger reflect, categorized by timeout / format / quality (plus a catch-all for anything uncategorized).
+- **Tier 2 — regression check.** Compares this run's average `code`-capability score against recent history in episodic memory (the same PVC agents write to). A real drop since the last skill revision — not just "missed today's threshold" — triggers a distinct `REGRESSION` reflect task.
+
+Results are written to `tests/results/`, then **cloned and pushed** to `main` (a real fast-forward push now, not a disconnected `git init` that silently failed). The Job deletes itself only *after* the push completes, and only if every test passed — kept around for debugging on failure, with `backoffLimit: 1` so a systemic failure (e.g. Ollama under load) fails fast instead of retrying 7 times over ~2 hours.
 
 Trigger immediately:
 ```bash
 make test-now
 ```
 
-Run locally:
+Run locally — **note:** `run_tests.py` targets `http://cxp-web:8080` (in-cluster DNS), unreachable from the host without a port-forward first:
 ```bash
-make test
+kubectl port-forward -n cxp svc/cxp-web 8080:8080 &
+CXP_WEB_API=http://localhost:8080 make test
 ```
 
 ---
@@ -221,7 +223,7 @@ kind-config.yaml       kind cluster with ports 80, 443, 4222 mapped
 
 - **Deploy path is sandbox-scoped but not fully isolated.** Only the YAML→`kubectl apply` path is namespace-scoped. Python/shell artifacts still run as a plain `subprocess` on the deployer pod (minimal explicit env, but no namespace/seccomp/network isolation).
 - **`ReadWriteOnce` memory PVC** works today only because the kind cluster is single-node. Move to ReadWriteMany (or the KV-store pattern used for skills) before running multi-node.
-- **`src`/`helm/cxp/app/` duplication is manual.** `make deploy` presumably keeps them in sync (check the Makefile); editing one tree directly without the other will drift silently.
+- **`src`/`helm/cxp/app/` duplication is real, but `make deploy`/`make sync` handle it** — the Makefile's `sync` target copies `src/`, `main.py`, and `tests/run_tests.py` into `helm/cxp/app/` before every deploy. Only a problem if you edit the `helm/cxp/app/` copy directly, or run `helm upgrade` without going through `make deploy` first.
 - **Reflect only maintains the `executor` skill** — planner/verifier skill files exist but nothing currently rewrites them.
 - **Small local models** (`qwen2.5:0.5b`/`1.5b`) occasionally emit malformed JSON, especially from planner's sub-task decomposition — this is normal and will trigger the halt gate, not a bug to chase.
 

@@ -48,7 +48,7 @@ graph TB
     end
 
     H -->|POST /api/submit| Web
-    Cron -->|6 tests, one at a time,<br/>waits for each to settle| Web
+    Cron -->|test suite, one at a time,<br/>waits for each to settle| Web
     Web -. checks before accepting .-> KVState
     Web -->|publish| Stream
     Stream --> Planner & Executor & Verifier & Assessor & Reflect & Deployer
@@ -67,7 +67,7 @@ graph TB
 
     Deployer -->|kubectl apply, score ≥ 0.85 only| Applied
 
-    Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|reputation, episodic| Memory
+    Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|reputation, always| Memory
     Planner & Executor & Verifier & Assessor & Reflect & Deployer -. checked before every packet .-> KVState
     Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|set on unhandled error| KVState
 ```
@@ -75,6 +75,7 @@ graph TB
 **Notes:**
 - `deployer` is the only pod with a `kubectl` binary (downloaded at init time) and a ServiceAccount — via a Role/RoleBinding — scoped only to `cxp-sandbox`. It cannot touch the `cxp` namespace the agents run in.
 - The memory PVC is `ReadWriteOnce`. That's only safe because the kind cluster is single-node; a real multi-node cluster would need `ReadWriteMany` or the KV-store pattern used for skills instead.
+- "reputation, always" in the diagram is a simplification: every agent writes reputation on every packet (`record_success`/`record_failure`), but only `verifier` writes the structured `episodic` entries (`{capability, skill_revision, score, goal}`) used for regression detection, and only `reflect`/`assessor` write `semantic` facts (free-text notes). Same file (`memory.json`), three different record types, written by different agents.
 
 ## 2. One task, start to finish
 
@@ -157,6 +158,8 @@ flowchart LR
 ```
 
 Before this, publish was fire-and-forget core NATS pub/sub: a packet published while no replica happened to be subscribed (mid-rollout, restart) was simply gone, with no record it ever existed. Redelivery here is deliberately narrow — it rescues a packet whose delivery attempt never *finished*, not a packet whose processing *failed*. Failures are the halt gate's job; acking on every exit path (including halted-drop and bad-packet paths) prevents a genuinely-failed packet from redelivering forever and spamming the same error.
+
+**`ack_wait` has to exceed the slowest legitimate LLM call, or redelivery causes duplicate processing instead of preventing lost work.** Consumers are configured with `ack_wait=300s` — the default (30s) is shorter than LLM calls have taken under real contention (observed 3-4 minutes), so JetStream was redelivering a message to another replica *while the first was still slowly processing it*, not lost but processed twice. Separately: recreating an existing durable consumer (e.g. to change its config) defaults to `deliver_policy=all`, replaying the *entire* stream history from the beginning — this caused a one-time burst of stale redeliveries the first time these consumers were recreated to apply the `ack_wait` fix. `deliver_policy=new` avoids that on any future consumer change.
 
 ## Is this actually a protocol?
 

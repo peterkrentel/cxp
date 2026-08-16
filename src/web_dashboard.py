@@ -258,7 +258,7 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
 
 <div class="row" style="height:200px" id="mid-row">
   <div class="panel resizable" style="flex:1.5;display:flex;flex-direction:column" id="pkt-panel">
-    <div class="panel-title">Packets — click row to view output</div>
+    <div class="panel-title">Packets — newest first, ⟳ live rows pinned at top, click a finished row for output</div>
     <div class="scroll" style="flex:1">
       <table><thead><tr><th>ID</th><th>Type</th><th>Cap</th><th>Status</th><th>Score</th><th>Goal</th></tr></thead>
       <tbody id="pkts"></tbody></table>
@@ -340,7 +340,20 @@ async function refresh() {
     return `<tr><td class="c">${r.agent}</td><td>${r.capability}</td><td class="${c}">${(r.score*100).toFixed(0)}%</td><td class="d">${r.successes}/${r.failures}</td></tr>`;
   }).join('');
 
-  document.getElementById('pkts').innerHTML = data.packets.slice().reverse().map(p => {
+  // Packets table only ever holds FINISHED packets (on_result fires on
+  // done/error) — nothing in-flight ever appears there on its own. Show
+  // what's currently active by synthesizing a row per agent that's
+  // "working" right now, from the Agents panel's live state, pinned above
+  // the historical (newest-first) list below.
+  const liveRows = Object.entries(data.agents)
+    .filter(([n, a]) => a.state === 'working' && a.packet_id)
+    .map(([n, a]) => `<tr style="background:#1a1a0a">
+      <td class="d">${esc(a.packet_id)}</td><td>${esc(a.packet_type || '')}</td><td>-</td>
+      <td class="y">⟳ live</td><td>-</td>
+      <td class="d" style="max-width:180px;overflow:hidden;white-space:nowrap">${esc(n)} working…</td>
+    </tr>`).join('');
+
+  document.getElementById('pkts').innerHTML = liveRows + data.packets.slice().reverse().map(p => {
     const c = p.status==='done'?'g':p.status==='error'?'r':'y';
     return `<tr data-clickable onclick="showOutput('${p.id}')">
       <td class="d">${p.id}</td><td>${p.type}</td><td>${p.capability}</td>

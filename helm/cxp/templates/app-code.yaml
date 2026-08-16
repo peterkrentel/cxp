@@ -49,3 +49,5 @@ data:
 {{ .Files.Get "app/src/agents/assessor.py" | indent 4 }}
   deployer.py: |
 {{ .Files.Get "app/src/agents/deployer.py" | indent 4 }}
+  diagnostician.py: |
+{{ .Files.Get "app/src/agents/diagnostician.py" | indent 4 }}

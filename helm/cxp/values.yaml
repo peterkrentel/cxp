@@ -152,3 +152,7 @@ agents:
     replicas: 1
     role: deployer
     model: ""             # no LLM needed — runs kubectl/python directly
+  diagnostician:
+    replicas: 1
+    role: diagnostician
+    model: qwen2.5:1.5b   # use cached model — needs kubectl too, read-only RBAC (see diagnostician-rbac.yaml)

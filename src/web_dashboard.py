@@ -224,7 +224,10 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
 <body>
 
 <div class="panel" id="halt-banner">
-  <span>⛔ SWARM HALTED — <span id="halt-reason"></span></span>
+  <div>
+    <div>⛔ SWARM HALTED — <span id="halt-reason"></span></div>
+    <div id="halt-diagnosis" style="display:none; font-size:0.9em; opacity:0.85; margin-top:4px">🩺 <span id="halt-diagnosis-text"></span> — <i id="halt-suggested-action"></i></div>
+  </div>
   <button onclick="clearHalt()">Resume ▶</button>
 </div>
 
@@ -319,6 +322,14 @@ async function refresh() {
   if (data.halt) {
     banner.style.display = 'flex';
     document.getElementById('halt-reason').textContent = data.halt.reason || 'unknown error';
+    const diag = document.getElementById('halt-diagnosis');
+    if (data.halt.diagnosis) {
+      diag.style.display = 'block';
+      document.getElementById('halt-diagnosis-text').textContent = data.halt.diagnosis;
+      document.getElementById('halt-suggested-action').textContent = data.halt.suggested_action || '';
+    } else {
+      diag.style.display = 'none';
+    }
   } else {
     banner.style.display = 'none';
   }

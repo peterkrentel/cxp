@@ -1,8 +1,10 @@
-# Roadmap / Backlog
+# CXP Roadmap / Backlog
+
+> **Format note:** unlike its neighbors in this `plans/` directory, this is a backlog index, not a single execution-ready plan — it's a list of independent, mostly one-liner options at varying levels of readiness. Two items below (oracle-cloud migration, ephemeral self-learning loop) have graduated into their own full dated plans living right alongside this file; the rest are still just captured reasoning, not yet broken into tasks.
 
 Where CXP could go next, captured so today's decisions and deferred ideas don't get lost. Nothing here is committed or scheduled — it's a backlog of options with the reasoning already done, so a future session (or future you) can pick one up without re-deriving the tradeoffs from scratch.
 
-Related docs: [`architecture.md`](architecture.md) (how it works today, including the "is this actually a protocol" honesty check), [`../tests/STRATEGY.md`](../tests/STRATEGY.md) (testing tiers and the drafted tier-3 tests).
+Related docs: [`../../architecture.md`](../../architecture.md) (how it works today, including the "is this actually a protocol" honesty check), [`../../../tests/STRATEGY.md`](../../../tests/STRATEGY.md) (testing tiers and the drafted tier-3 tests), [`2026-08-16-ephemeral-self-learning-loop.md`](2026-08-16-ephemeral-self-learning-loop.md) (design, not built — a second, ephemeral GitHub-Actions improvement loop alongside the live cluster), [`2026-08-16-oracle-cloud-migration.md`](2026-08-16-oracle-cloud-migration.md) (design, not started — moving off the laptop onto an always-on cloud VM).
 
 ---
 
@@ -10,7 +12,7 @@ Related docs: [`architecture.md`](architecture.md) (how it works today, includin
 
 **Quantization bump for the existing model.** Currently running `qwen2.5:1.5b` at `Q4_K_M` (confirmed via `ollama show`) — the default tag's quantization, one of the more lossy common options. Bumping to `Q6_K` or `Q8_0` (same weights, less compression) is the cheapest lever available for the JSON-malformation and structured-output failures seen throughout today — no model swap, no resource risk (Q8_0 for a 1.5B model is roughly ~1.6-1.8GB, still comfortable within the main Ollama instance's 3Gi limit). Try this *before* anything below — it isolates "does precision matter" as its own variable.
 
-~~Split Ollama into two instances, by model~~ — **done.** `assessor` (`0.5b`) now has its own dedicated instance (`ollama-small`, aliased in `Chart.yaml`), separate from the main instance serving everyone else's `1.5b`. See [`architecture.md`](architecture.md#1-components) for the current setup.
+~~Split Ollama into two instances, by model~~ — **done.** `assessor` (`0.5b`) now has its own dedicated instance (`ollama-small`, aliased in `Chart.yaml`), separate from the main instance serving everyone else's `1.5b`. See [`../../architecture.md`](../../architecture.md#1-components) for the current setup.
 
 **Let today's fixes prove themselves out.** Explicitly deferred per today's decision — don't change the model yet. Watch: does load average stay low under real (non-testing-session) use? Does halt frequency actually drop? Does the regression checker start showing a real trend once enough runs accumulate?
 
@@ -41,3 +43,5 @@ Related docs: [`architecture.md`](architecture.md) (how it works today, includin
 **GitOps (Flux/ArgoCD) migration.** Mentioned in passing when discussing why Helm resource names hardcode a `cxp-` prefix rather than templating off the release name — that naming choice actually fits a GitOps model better (one `HelmRelease` per environment, not multiple installs of the same chart side-by-side). Not otherwise scoped or investigated; would need its own pass if pursued.
 
 **Ad-hoc task history durability.** The web dashboard's Packets/Thinking-stream history is in-memory only — restart the pod (which happened many times today) and it's gone. Only the automated CronJob's test results are durable (via the `bot/test-results` git branch) and episodic memory (via the PVC). If casual interactive use ever needs its own history, it would need the same treatment: writing packet/thinking events somewhere durable instead of just holding them in the FastAPI process's memory.
+
+**Ephemeral self-learning loop.** A second, independent improvement loop — a manually-triggered GitHub Actions workflow that deploys its own throwaway kind cluster, runs the test suite, and git-checkpoints both results and skill revisions — running alongside (not replacing) the live interactive cluster, with a human-gated step to promote a validated ephemeral skill revision into the live cluster's KV. Fully designed in [`superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md`](superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md), execution-ready, but explicitly **not started** — the user wants to circle back on this deliberately rather than build it opportunistically.

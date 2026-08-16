@@ -20,6 +20,9 @@ spec:
       {{- if eq $cfg.role "deployer" }}
       serviceAccountName: cxp-deployer
       {{- end }}
+      {{- if eq $cfg.role "diagnostician" }}
+      serviceAccountName: cxp-diagnostician
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -46,7 +49,7 @@ spec:
             - { name: cm-src,    mountPath: /cm/src }
             - { name: cm-agents, mountPath: /cm/agents }
             - { name: cm-skills, mountPath: /cm/skills }
-        {{- if eq $cfg.role "deployer" }}
+        {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
         - name: kubectl
           image: python:3.12-slim
           command:
@@ -77,6 +80,11 @@ spec:
             - { name: PYTHONPATH,     value: /app/packages }
             {{- if eq $cfg.role "deployer" }}
             - { name: CXP_DEPLOY_NAMESPACE, value: cxp-sandbox }
+            {{- end }}
+            {{- if eq $cfg.role "diagnostician" }}
+            - { name: OLLAMA_SMALL_URL, value: "{{ $.Values.ollamaSmallUrl }}" }
+            {{- end }}
+            {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
             - { name: PATH,           value: "/shared-bin:/usr/local/bin:/usr/bin:/bin" }
             {{- end }}
           resources:
@@ -86,7 +94,7 @@ spec:
             - { name: app,    mountPath: /app }
             - { name: skills, mountPath: /skills }
             - { name: memory, mountPath: /data }
-            {{- if eq $cfg.role "deployer" }}
+            {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
             - { name: shared-bin, mountPath: /shared-bin }
             {{- end }}
       volumes:
@@ -97,7 +105,7 @@ spec:
         - { name: cm-agents, configMap: { name: cxp-app-agents } }
         - { name: cm-skills, configMap: { name: "{{ $.Values.skillsConfigMap }}" } }
         - { name: memory,    persistentVolumeClaim: { claimName: cxp-memory } }
-        {{- if eq $cfg.role "deployer" }}
+        {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
         - { name: shared-bin, emptyDir: {} }
         {{- end }}
 {{- end }}

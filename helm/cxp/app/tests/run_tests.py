@@ -59,6 +59,14 @@ def get_state() -> dict:
     return _http_get("/api/state")
 
 
+def check_halted() -> dict | None:
+    """Is the swarm currently halted? Checked before every submission —
+    without this, a halt mid-run cascades into every remaining submission
+    getting rejected with 409, which previously got reported as plain FAIL
+    (looks like a capability regression) instead of "never got to run"."""
+    return get_state().get("halt")
+
+
 def wait_for_results(task_ids: dict, timeout=480) -> dict:
     """Poll until all tasks have code+verify done, or timeout. Returns {task_id: result}.
 
@@ -339,6 +347,12 @@ def main():
         sys.exit(1)
     print("[TRACE] wait_for_ready() succeeded", flush=True)
 
+    halt = check_halted()
+    if halt:
+        print(f"\n⛔ Swarm is already halted ({halt.get('reason')}) — aborting before submitting anything. "
+              f"A human needs to clear this before the suite can run.", flush=True)
+        sys.exit(1)
+
     # Tier 0: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
@@ -358,6 +372,7 @@ def main():
 
     results = [smoke_eval]
     shuffled = random.sample(TESTS, len(TESTS))
+    halted_mid_run = False
 
     # Fully sequential: submit one test, wait for it to settle, only then
     # submit the next. A single test already cascades into several LLM calls
@@ -370,7 +385,17 @@ def main():
     print(f"\nRunning {len(shuffled)} tests sequentially...")
     task_map = {}    # task_id -> test
     result_map = {}  # task_id -> result, filled in as each test settles
-    for test in shuffled:
+    for i, test in enumerate(shuffled):
+        halt = check_halted()
+        if halt:
+            skipped = shuffled[i:]
+            print(f"\n⛔ Swarm halted mid-run ({halt.get('reason')}) — skipping remaining "
+                  f"{len(skipped)} test(s) instead of submitting into a wall of 409s.")
+            for remaining in skipped:
+                results.append({"label": remaining["label"], "status": "SKIPPED",
+                                 "reason": f"swarm halted: {halt.get('reason')}"})
+            halted_mid_run = True
+            break
         task_id = submit_task(test["goal"])
         if not task_id:
             results.append({"label": test["label"], "status": "FAIL", "reason": "submit failed"})
@@ -386,11 +411,22 @@ def main():
 
     # Evaluate and check for first-attempt failures needing retry. Retries
     # are submitted and awaited one at a time too, same reasoning as above —
-    # no concurrent Ollama load from the retry phase either.
+    # no concurrent Ollama load from the retry phase either. Skipped entirely
+    # if the swarm is halted — a retry would just get 409'd too.
     for task_id, test in task_map.items():
         raw = result_map.get(task_id)
         r = evaluate(test, raw, attempt=1)
-        if r["status"] != "PASS" and raw:
+        if r["status"] == "PASS":
+            results.append(r)
+            continue
+
+        halt = check_halted()
+        if halt:
+            halted_mid_run = True
+            results.append({**r, "status": "SKIPPED", "reason": f"swarm halted before retry: {halt.get('reason')}"})
+            continue
+
+        if raw:
             print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
             trigger_improvement(r["label"], r["issues"])
             retry_id = submit_task(test["goal"])
@@ -410,10 +446,15 @@ def main():
     print("RESULTS")
     print(f"{'='*60}")
     for r in results:
-        icon = "✓" if r["status"] == "PASS" else "✗"
+        icon = "✓" if r["status"] == "PASS" else "⊘" if r["status"] == "SKIPPED" else "✗"
         score_str = f" score={r['score']:.2f}" if "score" in r else ""
         attempt_str = f" (attempt {r['attempt']})" if r.get("attempt", 1) > 1 else ""
         print(f"{icon} {r['label']}: {r['status']}{score_str}{attempt_str}")
+
+    skipped_count = sum(1 for r in results if r["status"] == "SKIPPED")
+    if skipped_count:
+        print(f"\n⛔ {skipped_count} test(s) skipped due to a mid-run halt — "
+              f"these are NOT capability failures, the swarm just stopped taking work")
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     print(f"\n{passed}/{len(results)} passed")
@@ -428,13 +469,20 @@ def main():
     regression = check_regression(baseline_scores, this_run_scores)
     if regression:
         print(f"\n⚠ REGRESSION: {regression}")
-        trigger_improvement("REGRESSION", [regression])
+        if not halted_mid_run:
+            trigger_improvement("REGRESSION", [regression])
     elif this_run_scores:
         print(f"\n✓ No regression detected ({len(this_run_scores)} new sample(s) this run)")
 
-    # Post-run analysis: identify patterns and submit targeted reflect tasks
-    failed = [r for r in results if r["status"] not in ("PASS",)]
-    if failed:
+    # Post-run analysis: identify patterns and submit targeted reflect tasks.
+    # Skipped entirely if halted — every trigger_improvement call below would
+    # just get 409'd too, and SKIPPED entries aren't real capability failures.
+    failed = [r for r in results if r["status"] not in ("PASS", "SKIPPED")]
+    if failed and halted_mid_run:
+        print(f"\n{'='*60}\nPOST-RUN ANALYSIS\n{'='*60}")
+        print("⛔ Swarm halted mid-run — skipping reflect triggers for this run's failures "
+              "(submissions would just 409). Once resumed, the next scheduled run picks this back up.")
+    elif failed:
         print(f"\n{'='*60}")
         print("POST-RUN ANALYSIS")
         print(f"{'='*60}")

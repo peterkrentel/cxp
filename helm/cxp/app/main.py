@@ -33,6 +33,10 @@ def main() -> None:
         from src.agents.deployer import DeployerAgent
         asyncio.run(DeployerAgent().run())
 
+    elif role == "diagnostician":
+        from src.agents.diagnostician import DiagnosticianAgent
+        asyncio.run(DiagnosticianAgent().run())
+
     elif role == "dashboard":
         from src.dashboard import Dashboard
         asyncio.run(Dashboard().run())

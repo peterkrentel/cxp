@@ -32,6 +32,18 @@ If any agent hits an unhandled error, the swarm **halts swarm-wide** — new tas
 
 ---
 
+## Screenshots
+
+**Web dashboard** (`http://localhost`) — live agent state, reputation per capability, packet history, and the LLM thinking stream. The red banner and error trace here show the halt gate catching a real `ReadTimeout` from Ollama under concurrent load:
+
+![Web dashboard](docs/screenshots/web-dashboard.png)
+
+**The swarm's pods in `kubectl get pods`** — one Deployment per agent role, `cxp-nats` for JetStream, `cxp-ollama` for inference, and a `cxp-test-*` Job from the hourly self-test CronJob:
+
+![kubectl get pods -n cxp](docs/screenshots/k8s-pods.png)
+
+---
+
 ## Hardware requirements
 
 - **Minimum:** 8GB RAM, 4-core CPU, 10GB disk

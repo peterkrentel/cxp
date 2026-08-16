@@ -19,10 +19,10 @@ spec:
                 - -c
                 - |
                   set -e
+                  mkdir -p /app/src/agents /app/tests/results
                   cp /cm/root/main.py /app/main.py
                   cp /cm/root/requirements.txt /app/requirements.txt
                   cp /cm/root/run_tests.py /app/tests/run_tests.py
-                  mkdir -p /app/src/agents /app/tests/results
                   cp /cm/src/*.py /app/src/
                   cp /cm/agents/*.py /app/src/agents/
                   pip install --quiet --target /app/packages -r /app/requirements.txt

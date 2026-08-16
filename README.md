@@ -146,6 +146,170 @@ kind-config.yaml      kind cluster with ports 80, 443, 4222 mapped
 
 ---
 
+## System Status (2026-08-15)
+
+### ✅ Working
+- **Agent-to-agent pipeline**: Plan → Code → Verify → Deploy → Assess (full end-to-end)
+- **Memory safeguard**: Deployer backs up `/data/memory.json` before executing artifacts, restores on failure
+- **Markdown parsing**: Deployer strips ```language ... ``` blocks to extract YAML/Python code
+- **Parallel execution**: Multiple tasks flow through agents simultaneously without blocking
+- **Quality scoring**: Verifier assigns 0.0-1.0 scores, filters deployment (threshold: 0.85)
+- **Git automation**: Helm deploys increment git revisions, committed + pushed automatically
+- **Web dashboard**: Real-time task tracking, agent status, LLM thinking stream at http://localhost:8080
+
+### ⚠️ Known Issues
+1. **Test runner failing** — CronJob pods stuck in `Init:Error`
+   - Issue: ConfigMap embedding code may be too large or malformed
+   - Impact: Autonomous self-testing disabled; manual `make test-now` works
+   - Fix: Need to reduce ConfigMap size or split across multiple maps
+
+2. **Task submission stalls** — New tasks submitted via API not flowing to planner
+   - Old tasks (from earlier session) work fine; recent submissions hang
+   - Likely: Dashboard not receiving plan packets from NATS
+   - Status: Investigating NATS subscription timing
+
+3. **Executor artifact type detection** — Fixed but needs testing
+   - Was: Python code showing as "unrecognized artifact type"
+   - Fix: Added markdown block stripping (```yaml ... ```)
+   - Status: Deployed, awaiting test verification
+
+### 📊 Session Statistics
+- **Total packets processed**: 19
+- **Tasks completed**: 18
+- **Failed tasks**: 1 (cake recipe verification error)
+- **LLM calls**: 27
+- **Skill updates**: 4 (reflect rewrites triggered)
+- **Agents deployed**: 8 (planner, executor×2, verifier, assessor, deployer, reflect, web/dashboard)
+
+### 🔍 Reputation Table
+```
+executor-1:
+  code: 95% (18/19 successes) — Strong
+  k8s-manifest: 0% (0/1) — Never attempted (executor constrained to "code")
+
+verifier-1:
+  verify: 75% (3/4 successes) — Good discrimination
+
+planner-1:
+  plan: 100% (1/0) — Limited sample but reliable
+```
+
+### 🚀 Recent Improvements
+1. **Memory backup/restore** (commit 2b452dd)
+   - Deployer creates backup before executing quality_score >= 0.85
+   - Auto-restores on deployment failure or exception
+   - Prevents generated code from corrupting reputation system
+
+2. **Markdown code block stripping** (commit 399fad7)
+   - Executor wraps code in ```yaml ... ``` 
+   - Deployer now extracts raw code before detection
+   - Fixes YAML Deployment execution in sandbox
+
+3. **Executor capability constraint** (earlier)
+   - Changed from ["code", "k8s-manifest", "python-code", "any"] → ["code"]
+   - Prevents invalid capabilities polluting reputation table
+
+---
+
+## Debugging Commands
+
+### Watch system in real-time
+```bash
+kubectl get pods -n cxp -w
+```
+
+### Check NATS connectivity
+```bash
+kubectl exec -n cxp cxp-nats-box-* -- nats stat
+```
+
+### Tail agent logs
+```bash
+kubectl logs -n cxp deploy/cxp-planner -f
+kubectl logs -n cxp deploy/cxp-executor -f
+kubectl logs -n cxp deploy/cxp-verifier -f
+```
+
+### View dashboard API state
+```bash
+kubectl port-forward -n cxp svc/cxp-web 8080:8080 &
+curl http://localhost:8080/api/state | jq .
+```
+
+### Check memory (reputation + skills)
+```bash
+kubectl exec -n cxp deploy/cxp-planner -- cat /data/memory.json | jq '.reputation'
+```
+
+### Submit task manually
+```bash
+make submit GOAL="your task here"
+```
+
+### Restart stuck agents
+```bash
+kubectl rollout restart -n cxp deploy/cxp-planner deploy/cxp-executor deploy/cxp-verifier
+```
+
+### Run test suite
+```bash
+make test-now          # trigger CronJob immediately (currently failing)
+make test              # run tests locally
+```
+
+---
+
+## Known Limitations
+
+### LLM Model Constraints
+- **qwen2.5:0.5b** (planner, verifier): Very small, ~500M parameters
+  - Limited to simple coding patterns
+  - No real-time knowledge (training cutoff ~2024)
+  - May struggle with complex logic
+  
+- **qwen2.5:1.5b** (executor, reflect): Better but still small
+  - Good at: Python code, YAML generation, simple explanations
+  - Bad at: Complex algorithms, math proofs, multi-file projects
+
+### System Scope
+- **Can execute in sandbox only** — Kubernetes deployments go to `cxp-sandbox` namespace
+- **No external APIs** — Can't call real-time data (price, weather, news)
+- **No internet access** — Sandbox restricts network
+- **15s subprocess timeout** — Long-running code will be killed
+
+### Data Isolation
+- **Shared memory vulnerability** — Deployed code can read/corrupt `/data/memory.json`
+  - Mitigated: Backup/restore safeguard now in place
+  - Future: Make memory mount read-only to deployer
+
+---
+
+## Roadmap
+
+### Immediate (Fix blockers)
+- [ ] Debug test runner ConfigMap issue — why is Init failing?
+- [ ] Verify task submission flow — new tasks should hit planner
+- [ ] Test markdown stripping with real YAML deployments
+
+### Short-term (Polish)
+- [ ] Increase executor replicas to 4 (parallel task processing)
+- [ ] Add timeout to planner LLM calls (prevent hangs)
+- [ ] Implement memory snapshot before each deploy execution
+
+### Medium-term (Expand capability)
+- [ ] MCP server integration for safe external execution
+- [ ] Multi-model support (switch qwen2.5 ↔ mistral ↔ llama2)
+- [ ] Skill version management (git-backed rollback)
+- [ ] Persistent dashboard state (task history)
+
+### Long-term (Advanced)
+- [ ] Self-modifying agent topology (add/remove agents based on task load)
+- [ ] Cross-agent reputation exchange (planner can learn from executor's failures)
+- [ ] Structured knowledge graph (semantic memory → vector DB)
+- [ ] Browser-based skill editor with YAML validation
+
+---
+
 ## Configuration (helm/cxp/values.yaml)
 
 | Key | Default | What it does |

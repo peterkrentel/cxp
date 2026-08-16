@@ -1,0 +1,51 @@
+{
+  "timestamp": "20260816_151635",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: planner-1 failed on plan (8df0d8af): Expecting property name enclosed in double quotes: line 8 column 5 (char 340)"
+    }
+  ]
+}

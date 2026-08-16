@@ -74,6 +74,12 @@ spec:
                       git config user.name "CXP Test Runner"
                       mkdir -p tests/results
                       cp /app/tests/results/*.json tests/results/ 2>/dev/null || true
+
+                      # Has the fixed suite plateaued? Only this clone (not
+                      # the CronJob pod itself) has the full git-tracked run
+                      # history to check against.
+                      python3 tests/check_plateau.py tests/results || true
+
                       git add tests/results/
                       if git diff --cached --quiet; then
                         echo "No new results to push"

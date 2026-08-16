@@ -291,6 +291,13 @@ class AgentShell(ABC):
 
         # connect=10s, first-token=30s, between-tokens=60s
         timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+        # read=60.0 above is a PER-CHUNK timeout — it only fires if NO data
+        # arrives for 60s. A response that trickles back even a token every
+        # ~59s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
+        # bounds the whole call regardless of how the time gets spent, and
+        # is kept below ack_wait (300s) so this fails and halts before
+        # JetStream would redeliver the same message to another attempt.
+        LLM_TOTAL_TIMEOUT = 240.0
 
         await self._think(f"  ⟳ LLM ({len(user)} chars): {user[:120]}…")
 
@@ -319,7 +326,9 @@ class AgentShell(ABC):
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
-                full = await _stream(client)
+                full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     raise RuntimeError(

@@ -151,7 +151,7 @@ Before this existed, every failure was logged and silently forgotten — the swa
 flowchart LR
     Pub[emit_packet / /api/submit] -->|js.publish, not nc.publish| Stream[["JetStream stream<br/>CXP_PACKETS<br/>subjects: cxp.cap.>"]]
     Stream -->|durable consumer, manual_ack| Agent[Agent handler]
-    Agent -->|msg.ack() on EVERY exit path<br/>bad packet, halted, success, failure| Stream
+    Agent -->|msg.ack on EVERY exit path<br/>bad packet, halted, success, failure| Stream
     Restart[Pod restarts mid-delivery] -.->|message never acked| Stream
     Stream -.->|redelivered once a consumer<br/>is back — not lost| Agent
 ```

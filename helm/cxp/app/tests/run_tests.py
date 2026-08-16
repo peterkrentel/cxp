@@ -9,6 +9,7 @@ import time
 import urllib.request
 
 API = os.environ.get("CXP_WEB_API", "http://cxp-web:8080")
+MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")  # same PVC agents write to
 
 
 def _http_get(path: str) -> dict:
@@ -111,6 +112,49 @@ def _strip_markdown(text: str) -> str:
     return re.sub(r"^```[\w]*\n", "", re.sub(r"\n```$", "", text.strip())).strip()
 
 
+def validate_smoke(code: str) -> tuple[bool, list[str]]:
+    """Tier 0: is the pipeline even working, at all — not "is the swarm
+    good at X." Deliberately trivial so a failure here means something
+    different (and more urgent) than a capability test failing."""
+    code = _strip_markdown(code)
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    if "hello" not in code.lower():
+        return False, ["Expected output doesn't mention 'hello'"]
+    return True, []
+
+
+def _code_capability_scores() -> list[float]:
+    """All historical scores tagged capability='code' in episodic memory —
+    the only durable record of skill_revision-vs-score over time. Coarse by
+    necessity: entries are tagged by capability, not by which test produced
+    them (reflect only maintains the executor skill today, so this is
+    already exactly the score reflect's updates are meant to move)."""
+    try:
+        with open(MEMORY_PATH) as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    return [e["score"] for e in data.get("episodic", [])
+            if e.get("capability") == "code" and e.get("score") is not None]
+
+
+def check_regression(baseline: list[float], this_run: list[float]) -> str | None:
+    """Compare this run's average code-capability score against the recent
+    historical average from before this run started. Returns a warning
+    string if this looks like a real regression (not just a single bad
+    sample), else None."""
+    if len(baseline) < 5 or not this_run:
+        return None  # not enough history to compare against yet
+    baseline_avg = sum(baseline[-15:]) / len(baseline[-15:])
+    this_avg = sum(this_run) / len(this_run)
+    if this_avg < baseline_avg - 0.15:
+        return f"this run avg {this_avg:.2f} vs recent history avg {baseline_avg:.2f} — looks like a regression, not noise"
+    return None
+
+
 def validate_python(code: str) -> tuple[bool, list[str]]:
     code = _strip_markdown(code)
     issues = []
@@ -189,6 +233,18 @@ def validate_has_docstring(code: str) -> tuple[bool, list[str]]:
     return len(issues) == 0, issues
 
 
+# Tier 0 — pipeline health check, always run first, never shuffled with the
+# rest. A failure here means "the swarm is broken," a distinct and more
+# urgent signal than "the swarm is bad at capability X."
+SMOKE_TEST = {
+    "label": "SMOKE",
+    "goal": "write a Python one-liner that prints 'hello world'",
+    "validator": validate_smoke,
+    "threshold": 0.3,
+}
+
+# Tier 1 — capability coverage, one per assessor label (8/9; SELF_IMPROVEMENT
+# doesn't fit the pass/fail shape).
 TESTS = [
     {
         "label": "CODE_GENERATION",
@@ -283,7 +339,24 @@ def main():
         sys.exit(1)
     print("[TRACE] wait_for_ready() succeeded", flush=True)
 
-    results = []
+    # Tier 0: is the pipeline even working? Run before anything else, and
+    # treat a failure as a distinct, more urgent signal than a capability
+    # test failing — no point testing 8 capabilities if the plumbing's down.
+    print("\nRunning smoke test (pipeline health check)...")
+    smoke_task_id = submit_task(SMOKE_TEST["goal"])
+    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=120) if smoke_task_id else {}
+    smoke_eval = evaluate(SMOKE_TEST, smoke_result.get(smoke_task_id), attempt=1)
+    if smoke_eval["status"] != "PASS":
+        print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "
+              f"not just a specific capability. Running the rest of the suite anyway for more signal.")
+    else:
+        print("  ✓ SMOKE passed — pipeline is up")
+
+    # Baseline for regression detection: recent 'code' capability scores from
+    # BEFORE this run, so we can tell "this run avg" apart from history.
+    baseline_scores = _code_capability_scores()
+
+    results = [smoke_eval]
     shuffled = random.sample(TESTS, len(TESTS))
 
     # Fully sequential: submit one test, wait for it to settle, only then
@@ -344,6 +417,20 @@ def main():
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     print(f"\n{passed}/{len(results)} passed")
+
+    # Regression check: this run's average code-capability score vs. recent
+    # history (episodic memory, same PVC agents write to) — a real drop
+    # since the last reflect update is a materially different signal than
+    # "didn't meet today's static threshold." Coarse-grained on purpose:
+    # episodic entries are tagged by capability, not by test label, since
+    # reflect only maintains the executor skill today.
+    this_run_scores = _code_capability_scores()[len(baseline_scores):]
+    regression = check_regression(baseline_scores, this_run_scores)
+    if regression:
+        print(f"\n⚠ REGRESSION: {regression}")
+        trigger_improvement("REGRESSION", [regression])
+    elif this_run_scores:
+        print(f"\n✓ No regression detected ({len(this_run_scores)} new sample(s) this run)")
 
     # Post-run analysis: identify patterns and submit targeted reflect tasks
     failed = [r for r in results if r["status"] not in ("PASS",)]

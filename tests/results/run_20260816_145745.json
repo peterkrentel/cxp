@@ -1,0 +1,51 @@
+{
+  "timestamp": "20260816_145745",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (f987483d): ReadTimeout('')"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: executor-1 failed on code (f987483d): ReadTimeout('')"
+    }
+  ]
+}

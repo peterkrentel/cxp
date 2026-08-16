@@ -48,9 +48,9 @@ If any agent hits an unhandled error, the swarm **halts swarm-wide** — new tas
 
 ## Hardware requirements
 
-- **Minimum:** 8GB RAM, 4-core CPU, 10GB disk
+- **Realistic minimum: 10-core CPU, 8GB RAM, 10GB disk.** This isn't a conservative guess — it's what this project has actually been run on. Ollama alone was observed running two loaded-model runner processes simultaneously at ~470% CPU *each* (nearly the entire node) before resource limits were added; on anything smaller, expect the same contention (timeouts, even real `500` errors from Ollama itself under load) that this project hit and fixed. `helm/cxp/values.yaml`'s `ollama.resources` now caps it at 5 CPU / 4Gi — tune that down only if you also reduce how many agents/models are in play.
 - Current setup uses `qwen2.5:1.5b` (assessor uses the smaller `qwen2.5:0.5b`) — small models chosen to run comfortably on modest hardware, at the cost of occasionally malformed JSON output (planner is the most sensitive to this).
-- Bigger/better models: edit `helm/cxp/values.yaml` per-agent `model:` field; any Ollama-compatible model works.
+- Bigger/better models: edit `helm/cxp/values.yaml` per-agent `model:` field; any Ollama-compatible model works. Check actual headroom first (`docker exec <kind-node> sh -c 'nproc; free -h'`) — a bigger model needs more of both, on top of what's already tightly budgeted here.
 
 ---
 
@@ -116,13 +116,15 @@ curl -X POST http://localhost/api/halt/clear
 
 ## Autonomous testing
 
-A **CronJob** runs the test suite hourly inside the cluster. Tests run in three tiers, fully sequentially (one task submitted at a time, waiting for it to settle before the next — running them concurrently piled up enough simultaneous LLM calls to blow past Ollama's read timeout):
+A **CronJob** runs the test suite hourly inside the cluster. Full detail — including the finish-line definition and drafted tier-3 tests for after that — lives in [`tests/STRATEGY.md`](tests/STRATEGY.md); short version:
 
 - **Tier 0 — smoke test.** One trivial task ("print hello world"), always first. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X" — but the suite still continues for more signal rather than aborting.
 - **Tier 1 — capability coverage.** 8 tests, one per [assessor capability label](#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. Each retries once on failure, and failures trigger reflect, categorized by timeout / format / quality (plus a catch-all for anything uncategorized).
 - **Tier 2 — regression check.** Compares this run's average `code`-capability score against recent history in episodic memory (the same PVC agents write to). A real drop since the last skill revision — not just "missed today's threshold" — triggers a distinct `REGRESSION` reflect task.
 
-Results are written to `tests/results/`, then **cloned and pushed** to `main` (a real fast-forward push now, not a disconnected `git init` that silently failed). The Job deletes itself only *after* the push completes, and only if every test passed — kept around for debugging on failure, with `backoffLimit: 1` so a systemic failure (e.g. Ollama under load) fails fast instead of retrying 7 times over ~2 hours.
+All of this runs fully sequentially (one task submitted at a time, waiting for it to settle before the next — running them concurrently piled up enough simultaneous LLM calls to blow past Ollama's read timeout), and checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped, instead of cascading into a wall of 409s that reads as a false capability regression.
+
+Results are written to `tests/results/`, then cloned and pushed to a dedicated **`bot/test-results` branch — never `main` directly** (the bot racing a human's own push to `main` is exactly what happened once already; a human merges that branch in whenever they choose). The push step also runs [`check_plateau.py`](tests/check_plateau.py), which reports how many consecutive 8/8-pass runs have accumulated toward the finish line. The Job deletes itself only *after* the push completes, and only if every test passed — kept around for debugging on failure, with `backoffLimit: 1` so a systemic failure (e.g. Ollama under load) fails fast instead of retrying 7 times over ~2 hours.
 
 Trigger immediately:
 ```bash

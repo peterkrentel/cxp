@@ -8,6 +8,7 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")
@@ -72,8 +73,9 @@ class MemoryStore:
         return scored[0][0] if scored else None
 
     def add_episodic(self, summary: dict[str, Any]) -> None:
-        self.episodic.append(summary)
-        self._pending_episodic.append(summary)
+        entry = {**summary, "ts": datetime.now(timezone.utc).isoformat()}
+        self.episodic.append(entry)
+        self._pending_episodic.append(entry)
         if len(self.episodic) > 200:
             self.episodic = self.episodic[-200:]
 

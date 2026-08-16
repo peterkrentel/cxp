@@ -20,7 +20,7 @@ class ExecutorAgent(AgentShell):
     async def _execute(self, packet: CXPPacket) -> str:
         # fetched per-task (not at import time) so a reflect update is picked
         # up on the very next task, from every replica, without a pod restart
-        skill = await self.get_skill("executor", fallback_path="/skills/executor_v1.md")
+        skill, skill_revision = await self.get_skill_with_revision("executor", fallback_path="/skills/executor_v1.md")
         prompt = (
             f"Instructions: {packet.payload.instructions}\n\n"
             f"Goal: {packet.payload.goal}\n\n"
@@ -28,7 +28,9 @@ class ExecutorAgent(AgentShell):
         )
         output = await self.llm(BASE_SYSTEM + skill, prompt)
 
-        # spawn a verify packet automatically
+        # spawn a verify packet automatically — skill_revision rides along in
+        # `inputs` so verifier can log which skill version produced this
+        # artifact, letting improvement over reflect updates be measured
         verify = CXPPacket(
             origin=self.agent_id,
             type=PacketType.VERIFY,
@@ -40,6 +42,7 @@ class ExecutorAgent(AgentShell):
                 goal=f"Verify: {packet.payload.goal}",
                 instructions="Check correctness, completeness, and safety of the artifact below.",
                 context=output,
+                inputs={"skill_revision": skill_revision, "capability": "code"},
             ),
             routing_hints=RoutingHints(next_type=PacketType.REFLECT),
         )

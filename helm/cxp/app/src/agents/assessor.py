@@ -42,7 +42,7 @@ class AssessorAgent(AgentShell):
         raw = strip_code_fence(raw)
 
         try:
-            result = json.loads(raw)
+            result = json.loads(raw, strict=False)
         except Exception:
             result = {"labels": [], "verdict": raw[:200], "strengths": [], "gaps": []}
 

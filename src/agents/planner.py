@@ -32,7 +32,12 @@ class PlannerAgent(AgentShell):
         raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}")
 
         raw = strip_code_fence(raw)
-        sub_tasks: list[dict] = json.loads(raw)
+        # strict=False: small local models sometimes emit a literal unescaped
+        # control character (e.g. a raw newline) inside a string value —
+        # strict JSON rejects that outright, strict=False tolerates it.
+        # Doesn't fix every malformation this model produces (missing
+        # delimiters, truncated output), just this specific recurring class.
+        sub_tasks: list[dict] = json.loads(raw, strict=False)
 
         for task in sub_tasks:
             child = CXPPacket(

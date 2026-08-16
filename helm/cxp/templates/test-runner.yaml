@@ -11,6 +11,12 @@ spec:
   jobTemplate:
     spec:
       ttlSecondsAfterFinished: 3600
+      # Default backoffLimit is 6 (7 pod attempts). For a systemic failure
+      # (e.g. Ollama under load) that just repeats the same failure 7x and
+      # delays the Job reaching a terminal state — and therefore its TTL
+      # countdown — by up to ~2 hours. One retry is enough to rule out a
+      # one-off transient blip without compounding a real outage.
+      backoffLimit: 1
       template:
         spec:
           restartPolicy: Never
@@ -43,6 +49,13 @@ spec:
                 - -c
                 - |
                   set +e
+                  # python:3.12-slim ships neither git nor kubectl — both
+                  # needed below and previously silently absent (masked by
+                  # the old blanket `|| true` on the whole git block, and by
+                  # this cleanup step never having been reachable before the
+                  # self-delete race fix).
+                  apt-get update -qq && apt-get install -y -qq --no-install-recommends git > /dev/null 2>&1
+
                   python -u /app/tests/run_tests.py
                   TEST_EXIT=$?
 
@@ -78,9 +91,18 @@ spec:
                   # debugging on failure. Runs last, after the push above has
                   # already completed, so it can no longer race its own
                   # trailing git push (this used to happen from inside
-                  # run_tests.py, deleting the job mid-push).
+                  # run_tests.py, deleting the job mid-push). kubectl isn't
+                  # in python:3.12-slim either, so fetch it lazily — only
+                  # needed on the success path, which is the rarer case
+                  # while things stabilize.
                   if [ "$TEST_EXIT" -eq 0 ] && [ -n "$JOB_NAME" ]; then
-                    kubectl delete job "$JOB_NAME" -n "$POD_NAMESPACE" \
+                    case "$(uname -m)" in
+                      aarch64|arm64) ARCH=arm64 ;;
+                      *) ARCH=amd64 ;;
+                    esac
+                    python3 -c "import urllib.request; urllib.request.urlretrieve('https://dl.k8s.io/release/v1.29.0/bin/linux/${ARCH}/kubectl', '/tmp/kubectl')" \
+                      && chmod +x /tmp/kubectl \
+                      && /tmp/kubectl delete job "$JOB_NAME" -n "$POD_NAMESPACE" \
                       && echo "✓ Cleaned up job: $JOB_NAME" \
                       || echo "Note: could not auto-delete job (ok for local dev)"
                   fi

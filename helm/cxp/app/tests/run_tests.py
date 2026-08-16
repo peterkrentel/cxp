@@ -59,7 +59,13 @@ def get_state() -> dict:
 
 
 def wait_for_results(task_ids: dict, timeout=480) -> dict:
-    """Poll until all tasks have code+verify done, or timeout. Returns {task_id: result}."""
+    """Poll until all tasks have code+verify done, or timeout. Returns {task_id: result}.
+
+    Also tracks code_count (how many sub-tasks the planner actually spawned —
+    for DECOMPOSITION) and verify_issues (accumulated issues text from every
+    verify packet on the task — for SECURITY_AWARENESS, which cares whether
+    the verifier *flagged* something, not just whether code compiled).
+    """
     deadline = time.time() + timeout
     results = {}
     pending = set(task_ids.keys())
@@ -68,15 +74,24 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
         for task_id in list(pending):
             code_pkt = None
             best_score = 0.0
+            code_count = 0
+            verify_issues: list[str] = []
             for p in packets:
                 if p.get("task_id") != task_id:
                     continue
-                if p.get("type") == "code" and p.get("status") == "done" and p.get("output"):
-                    code_pkt = p
+                if p.get("type") == "code":
+                    code_count += 1
+                    if p.get("status") == "done" and p.get("output"):
+                        code_pkt = p
                 if p.get("type") == "verify" and p.get("status") == "done":
                     best_score = max(best_score, p.get("score") or 0.0)
+                    try:
+                        verify_issues.extend(json.loads(p.get("output") or "{}").get("issues", []))
+                    except Exception:
+                        pass
             if code_pkt:
-                results[task_id] = {**code_pkt, "score": best_score}
+                results[task_id] = {**code_pkt, "score": best_score,
+                                     "code_count": code_count, "verify_issues": verify_issues}
                 pending.discard(task_id)
         if pending:
             time.sleep(5)
@@ -120,6 +135,28 @@ def validate_yaml(text: str) -> tuple[bool, list[str]]:
         return False, [f"Invalid YAML: {e}"]
 
 
+def validate_infra_yaml(text: str) -> tuple[bool, list[str]]:
+    """STRUCTURED_OUTPUT checks *valid* YAML; this checks *specific keys*
+    exist, matching tests/examples.md's INFRA_AS_CODE expectations."""
+    try:
+        import yaml
+        doc = yaml.safe_load(_strip_markdown(text))
+    except Exception as e:
+        return False, [f"Invalid YAML: {e}"]
+    if not isinstance(doc, dict):
+        return False, ["YAML did not parse to a mapping"]
+    flat = str(doc).lower()
+    issues = [f"Missing '{key}' config" for key in ("persistence", "auth", "sentinel", "resources") if key not in flat]
+    return len(issues) == 0, issues
+
+
+def validate_always(_artifact: str) -> tuple[bool, list[str]]:
+    """For tests whose real check isn't the artifact text itself — see
+    min_subtasks (DECOMPOSITION) and required_issue_keywords (SECURITY_AWARENESS)
+    in evaluate() below."""
+    return True, []
+
+
 TESTS = [
     {
         "label": "CODE_GENERATION",
@@ -139,6 +176,26 @@ TESTS = [
         "validator": validate_yaml,
         "threshold": 0.70,
     },
+    {
+        "label": "DECOMPOSITION",
+        "goal": "scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README",
+        "validator": validate_always,
+        "threshold": 0.0,   # score isn't the point — sub-task count is
+        "min_subtasks": 3,  # examples.md says 5+; relaxed for the small local planner model
+    },
+    {
+        "label": "SECURITY_AWARENESS",
+        "goal": "generate a Python web scraper that downloads URLs from user input and saves to disk",
+        "validator": validate_always,
+        "threshold": 0.0,   # pass = verifier correctly flagged a risk, not a high score
+        "required_issue_keywords": ["url", "valid", "path", "travers", "rate limit", "sanitiz"],
+    },
+    {
+        "label": "INFRA_AS_CODE",
+        "goal": "generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits",
+        "validator": validate_infra_yaml,
+        "threshold": 0.70,
+    },
 ]
 
 
@@ -150,6 +207,19 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     output = result.get("output", "")
     print(f"  [{label}] score={score:.2f}  {len(output)} chars")
     valid, issues = test["validator"](output)
+
+    if "min_subtasks" in test:
+        code_count = result.get("code_count", 0)
+        if code_count < test["min_subtasks"]:
+            valid = False
+            issues = issues + [f"Only {code_count} sub-task(s) spawned, expected >= {test['min_subtasks']}"]
+
+    if "required_issue_keywords" in test:
+        verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
+        if not any(kw in verify_issues_text for kw in test["required_issue_keywords"]):
+            valid = False
+            issues = issues + [f"Verifier didn't flag any of: {test['required_issue_keywords']}"]
+
     passed = valid and score >= test["threshold"]
     return {
         "label": label,
@@ -172,23 +242,34 @@ def main():
     results = []
     shuffled = random.sample(TESTS, len(TESTS))
 
-    # Submit all tests upfront so agents work in parallel
-    print("\nSubmitting all tests...")
-    task_map = {}  # task_id -> test
+    # Fully sequential: submit one test, wait for it to settle, only then
+    # submit the next. A single test already cascades into several LLM calls
+    # (planner decomposition, then each sub-task's executor/verifier/assess/
+    # deploy), and there's only one Ollama instance behind everything with no
+    # resource limits set — running tests concurrently piles up enough
+    # simultaneous requests to blow past the per-call read timeout. This
+    # trades total run time for not being a guaranteed source of that pile-up
+    # (organic human-submitted load can still collide with a run, separately).
+    print(f"\nRunning {len(shuffled)} tests sequentially...")
+    task_map = {}    # task_id -> test
+    result_map = {}  # task_id -> result, filled in as each test settles
     for test in shuffled:
         task_id = submit_task(test["goal"])
-        if task_id:
-            task_map[task_id] = test
-            print(f"  ✓ [{test['label']}] submitted: {task_id}")
-        else:
+        if not task_id:
             results.append({"label": test["label"], "status": "FAIL", "reason": "submit failed"})
+            continue
+        task_map[task_id] = test
+        print(f"  ✓ [{test['label']}] submitted: {task_id} — waiting for it to finish...")
+        one_result = wait_for_results({task_id: test}, timeout=480)
+        if task_id in one_result:
+            result_map.update(one_result)
+            print(f"  … [{test['label']}] settled")
+        else:
+            print(f"  ⚠ [{test['label']}] timed out waiting — moving on to next test anyway")
 
-    # Wait for all results together
-    print(f"\n⏳ Waiting for {len(task_map)} task(s)...")
-    result_map = wait_for_results(task_map, timeout=480)
-
-    # Evaluate and check for first-attempt failures needing retry
-    retry_map = {}
+    # Evaluate and check for first-attempt failures needing retry. Retries
+    # are submitted and awaited one at a time too, same reasoning as above —
+    # no concurrent Ollama load from the retry phase either.
     for task_id, test in task_map.items():
         raw = result_map.get(task_id)
         r = evaluate(test, raw, attempt=1)
@@ -197,23 +278,15 @@ def main():
             trigger_improvement(r["label"], r["issues"])
             retry_id = submit_task(test["goal"])
             if retry_id:
-                retry_map[retry_id] = (test, r)
+                print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")
+                retry_result = wait_for_results({retry_id: test}, timeout=480)
+                results.append(evaluate(test, retry_result.get(retry_id), attempt=2))
             else:
                 # retry submission itself failed — don't silently drop the
                 # first-attempt result, or it counts toward neither pass nor fail
                 print(f"  ⚠️  [{r['label']}] retry submission failed — keeping first-attempt result")
                 results.append(r)
         else:
-            results.append(r)
-
-    # Wait for retries together
-    if retry_map:
-        print(f"\n⏳ Waiting for {len(retry_map)} retry(s)...")
-        time.sleep(10)
-        retry_results = wait_for_results({tid: t for tid, (t, _) in retry_map.items()}, timeout=480)
-        for retry_id, (test, first_result) in retry_map.items():
-            raw = retry_results.get(retry_id)
-            r = evaluate(test, raw, attempt=2)
             results.append(r)
 
     print(f"\n{'='*60}")

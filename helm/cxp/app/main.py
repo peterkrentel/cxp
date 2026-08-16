@@ -74,8 +74,9 @@ async def _submit_task(goal: str) -> None:
         payload=Payload(goal=goal),
     )
     packet.append_trace("human", "created", "submitted via CLI")
-    # Route directly to the plan capability subject
-    await nc.publish(f"cxp.cap.plan", packet.model_dump_json().encode())
+    # Route directly to the plan capability subject, via JetStream so the
+    # publish is confirmed durably stored before this process exits
+    await nc.jetstream().publish("cxp.cap.plan", packet.model_dump_json().encode())
     await nc.drain()
     print(f"Task submitted: {packet.task_id[:8]}  goal='{goal}'")
 

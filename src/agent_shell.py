@@ -30,6 +30,14 @@ SUBJECT_THINKING  = "cxp.thinking"   # LLM stream + agent reasoning
 KV_SKILLS = "cxp-skills"  # bucket: skill file text, shared across all replicas
 KV_STATE  = "cxp-state"   # bucket: swarm-wide control state (e.g. halt flag)
 
+# Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
+# published while no replica happens to be subscribed (mid-rollout, pod
+# restart) isn't silently lost — it's redelivered once a consumer is back.
+# Results/dashboard/thinking stay plain pub/sub: they're fan-out status/log
+# events for live viewers, not single-consumer work items.
+STREAM_PACKETS = "CXP_PACKETS"
+STREAM_PACKET_SUBJECTS = ["cxp.cap.>"]
+
 
 def strip_code_fence(text: str) -> str:
     """Extract code from the first ```lang ... ``` fence, ignoring trailing prose.
@@ -62,6 +70,11 @@ class AgentShell(ABC):
 
     async def connect(self) -> None:
         self._nc = await nats.connect(NATS_URL)
+        js = self._nc.jetstream()
+        try:
+            await js.add_stream(name=STREAM_PACKETS, subjects=STREAM_PACKET_SUBJECTS)
+        except BadRequestError:
+            pass  # another replica already created it with the same config
         log.info("[%s] connected to NATS", self.agent_id)
 
     async def _kv(self, bucket: str):
@@ -84,14 +97,21 @@ class AgentShell(ABC):
         Falls back to the ConfigMap-seeded local file only if the KV bucket
         has no entry yet (i.e. reflect hasn't written an update since deploy).
         """
+        content, _ = await self.get_skill_with_revision(name, fallback_path)
+        return content
+
+    async def get_skill_with_revision(self, name: str, fallback_path: str | None = None) -> tuple[str, int | None]:
+        """Like get_skill, but also returns the KV revision (None if reading
+        from the fallback file) — lets callers tag output with which skill
+        version produced it, so improvement over time can actually be measured."""
         try:
             kv = await self._kv(KV_SKILLS)
             entry = await kv.get(name)
-            return entry.value.decode()
+            return entry.value.decode(), entry.revision
         except Exception:
             if fallback_path and os.path.exists(fallback_path):
-                return open(fallback_path).read()
-            return ""
+                return open(fallback_path).read(), None
+            return "", None
 
     async def put_skill(self, name: str, content: str) -> int:
         """Write an updated skill file, visible to every replica on next read."""
@@ -132,19 +152,28 @@ class AgentShell(ABC):
         await self.connect()
 
         async def handle(msg):
+            # Every exit path below acks — redelivery here exists only to
+            # rescue a packet whose delivery attempt never finished (pod
+            # died mid-handling before this line ran), not to retry
+            # business-logic failures. Those are already the halt gate's
+            # job, and a failed packet redelivering forever would just spam
+            # the same error into the halt reason.
             try:
                 packet = CXPPacket.model_validate_json(msg.data)
             except Exception as exc:
                 log.warning("[%s] bad packet: %s", self.agent_id, exc)
+                await msg.ack()
                 return
 
             if packet.status != PacketStatus.PENDING:
+                await msg.ack()
                 return
 
             halt = await self.is_halted()
             if halt:
                 log.warning("[%s] swarm halted (%s) — dropping packet %s",
                             self.agent_id, halt.get("reason"), packet.id[:8])
+                await msg.ack()
                 return
 
             packet.claim(self.agent_id)
@@ -174,14 +203,20 @@ class AgentShell(ABC):
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")
+            await msg.ack()
 
-        # Each capability gets its own capability-routed subject with a shared
-        # queue group so multiple replicas of the same agent type compete (not duplicate).
+        # Each capability gets its own capability-routed subject with a durable
+        # JetStream consumer — `durable` + `queue` gives the same "replicas
+        # compete, not duplicate" behavior as a core queue group, but with
+        # redelivery: a packet published while no replica is up (mid-rollout,
+        # restart) sits in the stream instead of vanishing, and is handed to
+        # whichever replica comes back first.
         for cap in self.capabilities:
-            subject     = f"cxp.cap.{cap}"
-            queue_group = f"cxp-{cap}"
-            await self._nc.subscribe(subject, queue=queue_group, cb=handle)
-            log.info("[%s] listening on %s (queue=%s)", self.agent_id, subject, queue_group)
+            subject = f"cxp.cap.{cap}"
+            durable = f"cxp-{cap}"
+            js = self._nc.jetstream()
+            await js.subscribe(subject, durable=durable, queue=durable, cb=handle, manual_ack=True)
+            log.info("[%s] listening on %s (durable=%s)", self.agent_id, subject, durable)
 
         await self._emit_status("idle")
         while True:
@@ -192,9 +227,11 @@ class AgentShell(ABC):
         """Process the packet and return the output string."""
 
     async def emit_packet(self, packet: CXPPacket) -> None:
-        """Route a new packet to the correct capability subject."""
+        """Route a new packet to the correct capability subject, via
+        JetStream so the publish is confirmed stored before returning."""
         subject = f"cxp.cap.{packet.capability}"
-        await self._nc.publish(subject, packet.model_dump_json().encode())
+        js = self._nc.jetstream()
+        await js.publish(subject, packet.model_dump_json().encode())
 
     async def _publish(self, subject: str, packet: CXPPacket) -> None:
         await self._nc.publish(subject, packet.model_dump_json().encode())

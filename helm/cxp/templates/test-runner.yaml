@@ -63,7 +63,11 @@ spec:
                   # the real main and commits on top of it (rather than
                   # `git init` from scratch) so the push is a genuine
                   # fast-forward instead of always being rejected and
-                  # silently swallowed by `|| true`.
+                  # silently swallowed by `|| true`. Pushes to a dedicated
+                  # bot/test-results branch, NEVER main directly — a human
+                  # merges that in whenever they choose, on their own
+                  # schedule, so the bot can never race a human's own push
+                  # to main (which is exactly what happened once already).
                   if [ -f /git-creds/token ] && [ -f /git-creds/repo ]; then
                     REPO=$(cat /git-creds/repo)
                     TOKEN=$(cat /git-creds/token)
@@ -72,6 +76,15 @@ spec:
                       cd /tmp/repo-push
                       git config user.email "cxp-bot@localhost"
                       git config user.name "CXP Test Runner"
+
+                      # Continue the existing bot branch if one's already
+                      # out there; otherwise start a fresh one off main.
+                      if git fetch -q origin bot/test-results 2>/dev/null; then
+                        git checkout -q -B bot/test-results origin/bot/test-results
+                      else
+                        git checkout -q -b bot/test-results
+                      fi
+
                       mkdir -p tests/results
                       cp /app/tests/results/*.json tests/results/ 2>/dev/null || true
 
@@ -83,8 +96,8 @@ spec:
                       git add tests/results/
                       if git diff --cached --quiet; then
                         echo "No new results to push"
-                      elif git commit -q -m "test results $(date +%Y%m%d_%H%M)" && git push -q origin HEAD:main; then
-                        echo "✓ Pushed test results to git"
+                      elif git commit -q -m "test results $(date +%Y%m%d_%H%M)" && git push -q origin bot/test-results; then
+                        echo "✓ Pushed test results to bot/test-results (never main — merge manually when ready)"
                       else
                         echo "⚠ git push failed — see output above"
                       fi

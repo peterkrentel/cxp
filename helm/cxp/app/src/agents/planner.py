@@ -40,10 +40,22 @@ class PlannerAgent(AgentShell):
         sub_tasks: list[dict] = json.loads(raw, strict=False)
 
         for task in sub_tasks:
+            type_str = task.get("type", "code")
+            # capability routes to cxp.cap.<capability>, and only code/verify/
+            # reflect have a subscribed consumer. task.get(..., "any") used to
+            # be the fallback here — "any" has no consumer, so a sub-task
+            # missing this field was published successfully and then silently
+            # lost forever (no error, no halt, just gone). Falling back to
+            # type_str keeps the packet routable; the model is already told
+            # capability must match type, so this is the same value it should
+            # have provided anyway.
+            capability = task.get("capability") or type_str
+            if capability not in ("code", "verify", "reflect"):
+                capability = "code"
             child = CXPPacket(
                 origin=self.agent_id,
-                type=PacketType(task.get("type", "code")),
-                capability=task.get("capability", "any"),
+                type=PacketType(type_str),
+                capability=capability,
                 priority=int(task.get("priority", 2)),
                 task_id=packet.task_id,
                 parent_packet_id=packet.id,

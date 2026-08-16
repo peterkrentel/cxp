@@ -74,9 +74,9 @@ def wait_for_result(task_id: str, timeout=300) -> dict | None:
 
 
 def trigger_improvement(label: str, issues: list[str]):
-    """Submit a reflect task so the skill file gets updated."""
-    goal = f"improve executor skill based on test failure: {', '.join(issues[:2])}"
-    resp = _http_post("/api/submit", {"goal": goal})
+    """Submit a reflect task directly — bypass planner to avoid hallucinated subtasks."""
+    goal = f"Test '{label}' failed: {'; '.join(issues[:2])}. Review executor skill and fix."
+    resp = _http_post("/api/submit", {"goal": goal, "capability": "reflect"})
     print(f"  ↑ Improvement task submitted: {resp.get('task_id', '?')}")
 
 

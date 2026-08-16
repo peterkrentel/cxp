@@ -119,16 +119,22 @@ async def submit_task(request: Request):
     goal = body.get("goal", "").strip()
     if not goal:
         return JSONResponse({"error": "goal required"}, status_code=400)
+    # allow callers (e.g. test runner) to target a specific capability directly
+    capability = body.get("capability", "plan")
+    type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
+                "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
+                "assess": PacketType.ASSESS, "deploy": PacketType.DEPLOY}
+    ptype = type_map.get(capability, PacketType.PLAN)
     packet = CXPPacket(
         origin="web-ui",
-        type=PacketType.PLAN,
-        capability="plan",
+        type=ptype,
+        capability=capability,
         priority=5,
         task_id=uuid.uuid4().hex[:8],
         payload=Payload(goal=goal, instructions=goal, context=""),
     )
     if _nc:
-        await _nc.publish("cxp.cap.plan", packet.model_dump_json().encode())
+        await _nc.publish(f"cxp.cap.{capability}", packet.model_dump_json().encode())
     return JSONResponse({"task_id": packet.task_id, "packet_id": packet.id[:8]})
 
 

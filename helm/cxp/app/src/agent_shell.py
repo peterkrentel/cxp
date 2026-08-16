@@ -119,43 +119,13 @@ class AgentShell(ABC):
         """Call Ollama with streaming; auto-pull model if not present."""
         import httpx
 
+        # connect=10s, first-token=30s, between-tokens=60s
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+
         await self._think(f"  ⟳ LLM ({len(user)} chars): {user[:120]}…")
-        chunks: list[str] = []
 
-        async with httpx.AsyncClient(timeout=180) as client:
-            # Pull model if not available
-            try:
-                async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
-                    "model": OLLAMA_MODEL, "stream": True,
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                }) as resp:
-                    if resp.status_code == 404:
-                        await self._think(f"  ⬇ Pulling model {OLLAMA_MODEL}…")
-                        pull = await client.post(f"{OLLAMA_URL}/api/pull",
-                            json={"name": OLLAMA_MODEL, "stream": False}, timeout=600)
-                        pull.raise_for_status()
-                        await self._think(f"  ✓ Model pulled, retrying…")
-                    else:
-                        resp.raise_for_status()
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            try:
-                                token = json.loads(line).get("message", {}).get("content", "")
-                                if token:
-                                    chunks.append(token)
-                                    if len("".join(chunks)) % 30 == 0:
-                                        await self._nc.publish(SUBJECT_THINKING,
-                                            json.dumps({"agent": self.agent_id, "text": token, "stream": True}).encode())
-                            except Exception:
-                                continue
-                        full = "".join(chunks)
-                        await self._think(f"  ✓ response ({len(full)} chars): {full[:120]}…")
-                        return full
-            except Exception:
-                pass
-
-            # Retry after pull
+        async def _stream(client: httpx.AsyncClient) -> str:
+            chunks: list[str] = []
             async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
                 "model": OLLAMA_MODEL, "stream": True,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -173,7 +143,22 @@ class AgentShell(ABC):
                                     json.dumps({"agent": self.agent_id, "text": token, "stream": True}).encode())
                     except Exception:
                         continue
+            return "".join(chunks)
 
-        full = "".join(chunks)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                full = await _stream(client)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 404:
+                    raise
+                # Pull missing model then retry once
+                await self._think(f"  ⬇ Pulling model {OLLAMA_MODEL}…")
+                pull = await client.post(f"{OLLAMA_URL}/api/pull",
+                    json={"name": OLLAMA_MODEL, "stream": False},
+                    timeout=httpx.Timeout(600.0))
+                pull.raise_for_status()
+                await self._think(f"  ✓ Model pulled, retrying…")
+                full = await _stream(client)
+
         await self._think(f"  ✓ response ({len(full)} chars): {full[:120]}…")
         return full

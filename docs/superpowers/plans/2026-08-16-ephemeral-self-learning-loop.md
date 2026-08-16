@@ -6,7 +6,7 @@
 
 **Goal:** Add a second, independent improvement loop — an ephemeral GitHub-Actions-based pipeline that spins up its own kind cluster, runs the test suite against the swarm, and git-checkpoints both results and skill revisions — running alongside (not replacing) today's live/interactive kind cluster, with a human-gated promotion step to move a validated skill revision from the ephemeral loop into the live cluster.
 
-**Architecture:** Two loops sharing one source of truth (git), not one shared cluster. **Loop A (existing, unchanged):** the live kind cluster on the user's laptop (or eventually the Oracle Cloud VM per [`oracle-cloud-plan.md`](../../oracle-cloud-plan.md)) — real-time NATS/JetStream KV for skills and halt state, human-facing web dashboard, hourly CronJob test-runner pushing results to the `bot/test-results` git branch. **Loop B (new):** a GitHub Actions workflow that deploys a throwaway kind cluster from the same Helm chart, pulls Ollama models in-runner (confirmed workable — user has done this before), runs the existing test suite against it, and instead of writing skill revisions to a live JetStream KV (which wouldn't survive the runner's teardown anyway), commits both the test results *and* the resulting skill revision text to a new git-tracked directory. A separate promotion step — human-approved for now — diffs an ephemeral-loop skill revision against the live cluster's current KV entry and, if accepted, writes it into Loop A's `cxp-skills` KV. Git is the only thing both loops share; neither loop talks to the other's cluster directly.
+**Architecture:** Two loops sharing one source of truth (git), not one shared cluster. **Loop A (existing, unchanged):** the live kind cluster on the user's laptop (or eventually the Oracle Cloud VM per [`2026-08-16-oracle-cloud-migration.md`](2026-08-16-oracle-cloud-migration.md)) — real-time NATS/JetStream KV for skills and halt state, human-facing web dashboard, hourly CronJob test-runner pushing results to the `bot/test-results` git branch. **Loop B (new):** a GitHub Actions workflow that deploys a throwaway kind cluster from the same Helm chart, pulls Ollama models in-runner (confirmed workable — user has done this before), runs the existing test suite against it, and instead of writing skill revisions to a live JetStream KV (which wouldn't survive the runner's teardown anyway), commits both the test results *and* the resulting skill revision text to a new git-tracked directory. A separate promotion step — human-approved for now — diffs an ephemeral-loop skill revision against the live cluster's current KV entry and, if accepted, writes it into Loop A's `cxp-skills` KV. Git is the only thing both loops share; neither loop talks to the other's cluster directly.
 
 **Tech Stack:** GitHub Actions, `helm/kind-action` (already in use for [`ci.yml`](../../../.github/workflows/ci.yml)), Ollama (pulled in-runner, no new hosting), existing Helm chart (`helm/cxp`), existing NATS/JetStream KV client code in `src/agent_shell.py`, git (new directory under version control, no new storage system).
 
@@ -383,6 +383,17 @@ git commit -m "feat: add manual promote-skill CLI for ephemeral-to-live gate"
 ```
 
 ---
+
+## Addendum (2026-08-16): a second resolution tier is missing, not just a second loop
+
+A `diagnostician` agent has since been built and merged directly against the live cluster (Loop A) — on every halt, it investigates via `kubectl top`/Ollama's `/api/ps` and, for a narrow class of plain network/LLM timeouts, auto-clears the halt without a human. That's real, working self-resolution — but only for *infra noise*. While validating it live, a real bug surfaced in the diagnostician's own code (its LLM call could itself time out and cascade into a second halt), and the thing that diagnosed and fixed *that* bug was Claude — the swarm had no mechanism to fix its own code, only to shrug off transient timeouts.
+
+That's the actual gap this plan should account for going forward: two distinct resolution tiers, not one.
+
+- **Tier 1 (built, live in the cluster today):** the `diagnostician` agent — resolves pure infra noise (timeouts) in place, no code change, no human, no PR.
+- **Tier 2 (not built — the natural extension of this plan's Loop B):** a real coding-agent pass — not the small local Ollama models, which is the whole reason Loop B calls for git-checkpointed, human-reviewed cycles rather than live auto-apply — that takes an *actual code defect* the diagnostician correctly declined to auto-resolve (e.g. the planner's uncaught `JSONDecodeError`, found the same day, that unlike verifier's has no fallback), and proposes a real fix via the same branch → PR → CI pattern this project already uses for every other change, running inside Loop B's ephemeral pipeline rather than live against Loop A.
+
+Explicitly not scoped further or approved for execution — captured here so Task 3's design doesn't get re-derived without this context once this plan is picked back up.
 
 ## Open Questions (unresolved by this plan — decide before Task 3 execution)
 

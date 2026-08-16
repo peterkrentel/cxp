@@ -14,7 +14,8 @@ def _http_get(path: str) -> dict:
     try:
         with urllib.request.urlopen(f"{API}{path}", timeout=10) as r:
             return json.loads(r.read())
-    except Exception:
+    except Exception as e:
+        print(f"  ⚠️  GET {API}{path} failed: {type(e).__name__}: {e}")
         return {}
 
 
@@ -27,21 +28,23 @@ def _http_post(path: str, data: dict) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
-    except Exception:
+    except Exception as e:
+        print(f"  ⚠️  POST {API}{path} failed: {type(e).__name__}: {e}")
         return {}
 
 
 def wait_for_ready(timeout=300):
     """Wait until the web API is responding."""
-    print("⏳ Waiting for cluster to be ready...")
+    print("⏳ Waiting for cluster to be ready...", flush=True)
+    sys.stdout.flush()
     deadline = time.time() + timeout
     while time.time() < deadline:
         state = _http_get("/api/state")
         if state:
-            print("✓ Cluster ready")
+            print("✓ Cluster ready", flush=True)
             return True
         time.sleep(5)
-    print("✗ Timeout waiting for cluster")
+    print("✗ Timeout waiting for cluster", flush=True)
     return False
 
 
@@ -175,8 +178,12 @@ def run_test(test: dict, attempt: int = 1) -> dict:
 
 
 def main():
+    print("[TRACE] Entering main()", flush=True)
+    sys.stdout.flush()
     if not wait_for_ready():
+        print("[TRACE] wait_for_ready() returned False, exiting", flush=True)
         sys.exit(1)
+    print("[TRACE] wait_for_ready() succeeded", flush=True)
 
     results = []
     for test in TESTS:

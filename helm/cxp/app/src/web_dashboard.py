@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .agent_shell import NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS, SUBJECT_THINKING
+from .agent_shell import KV_STATE, NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS, SUBJECT_THINKING
 from .memory import get_store
 from .packet import CXPPacket, PacketType, Payload
 
@@ -34,6 +34,33 @@ state = {
 }
 
 _nc = None
+_kv_cache: dict[str, object] = {}
+
+
+async def _kv(bucket: str):
+    from nats.js.errors import BadRequestError, NotFoundError
+    if bucket not in _kv_cache:
+        js = _nc.jetstream()
+        try:
+            _kv_cache[bucket] = await js.key_value(bucket)
+        except NotFoundError:
+            try:
+                _kv_cache[bucket] = await js.create_key_value(bucket=bucket)
+            except BadRequestError:
+                _kv_cache[bucket] = await js.key_value(bucket)
+    return _kv_cache[bucket]
+
+
+async def get_halt() -> dict | None:
+    if not _nc:
+        return None
+    try:
+        kv = await _kv(KV_STATE)
+        entry = await kv.get("halt")
+        data = json.loads(entry.value.decode())
+        return data if data.get("halted") else None
+    except Exception:
+        return None
 
 
 async def subscribe_nats():
@@ -73,7 +100,10 @@ async def subscribe_nats():
                 state["stats"]["tasks_done"] += 1
             elif packet.status.value == "error":
                 state["stats"]["tasks_error"] += 1
-            if packet.type.value == "reflect":
+            # capability, not type — PacketType has no ASSESS/DEPLOY value, so
+            # verifier labels deploy/assess/reflect packets all as type=REFLECT;
+            # counting by type here previously counted deploys/assessments too.
+            if packet.capability == "reflect" and packet.status.value == "done":
                 state["stats"]["reflects"] += 1
             state["last_activity"] = datetime.now().isoformat()
         except Exception as e:
@@ -116,6 +146,13 @@ async def startup():
 
 @app.post("/api/submit")
 async def submit_task(request: Request):
+    halt = await get_halt()
+    if halt:
+        return JSONResponse({
+            "error": f"swarm halted: {halt.get('reason', 'unknown error')} — clear it before submitting new work",
+            "halt": halt,
+        }, status_code=409)
+
     body = await request.json()
     goal = body.get("goal", "").strip()
     if not goal:
@@ -138,6 +175,13 @@ async def submit_task(request: Request):
     if _nc:
         await _nc.publish(f"cxp.cap.{capability}", packet.model_dump_json().encode())
     return JSONResponse({"task_id": packet.task_id, "packet_id": packet.id[:8]})
+
+
+@app.post("/api/halt/clear")
+async def clear_halt():
+    kv = await _kv(KV_STATE)
+    await kv.put("halt", json.dumps({"halted": False}).encode())
+    return JSONResponse({"ok": True})
 
 
 @app.get("/")
@@ -172,9 +216,17 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
 .drag-handle { height: 12px; background: linear-gradient(to bottom, #1a6600 0%, #00ff00 50%, #1a6600 100%); cursor: ns-resize; margin: 4px 0; display: flex; align-items: center; justify-content: center; user-select: none; }
 .drag-handle::after { content: '⋮'; color: #0f0; font-size: 14px; font-weight: bold; }
 .drag-handle:hover { background: linear-gradient(to bottom, #00ff00 0%, #00ff00 50%, #00ff00 100%); }
+#halt-banner { display:none; border:1px solid #ff4444; background:#2a0a0a; color:#ff6666; padding:8px 10px; margin-bottom:8px; align-items:center; justify-content:space-between; }
+#halt-banner button { background:#ff4444; color:#000; border:1px solid #ff6666; }
+#halt-banner button:hover { background:#ff8888; }
 </style>
 </head>
 <body>
+
+<div class="panel" id="halt-banner">
+  <span>⛔ SWARM HALTED — <span id="halt-reason"></span></span>
+  <button onclick="clearHalt()">Resume ▶</button>
+</div>
 
 <div class="panel" style="margin-bottom:8px">
   <div class="panel-title">Submit Task</div>
@@ -245,6 +297,11 @@ async function submitTask() {
 }
 document.getElementById('goal-input').addEventListener('keydown', e => { if(e.key==='Enter') submitTask(); });
 
+async function clearHalt() {
+  await fetch('/api/halt/clear', {method:'POST'});
+  refresh();
+}
+
 function showOutput(id) {
   const p = packets.find(x=>x.id===id);
   if (!p) return;
@@ -257,6 +314,14 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 async function refresh() {
   const data = await fetch('/api/state').then(r=>r.json());
   packets = data.packets;
+
+  const banner = document.getElementById('halt-banner');
+  if (data.halt) {
+    banner.style.display = 'flex';
+    document.getElementById('halt-reason').textContent = data.halt.reason || 'unknown error';
+  } else {
+    banner.style.display = 'none';
+  }
 
   document.getElementById('s-done').textContent = data.stats.tasks_done;
   document.getElementById('s-error').textContent = data.stats.tasks_error;
@@ -360,4 +425,5 @@ async def get_state():
         "stats": state["stats"],
         "reputation": reputation,
         "last_activity": state["last_activity"],
+        "halt": await get_halt(),
     })

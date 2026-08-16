@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 
-from ..agent_shell import AgentShell
+from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 
-SKILL = open("/skills/planner_v1.md").read() if __import__("os").path.exists("/skills/planner_v1.md") else ""
-
-SYSTEM = """You are a task planner in a distributed AI swarm.
+BASE_SYSTEM = """You are a task planner in a distributed AI swarm.
 Given a high-level goal, decompose it into 2-5 focused sub-tasks.
 Return ONLY a JSON array of objects with these fields:
   type        - one of: code, verify, reflect
@@ -20,7 +18,7 @@ Return ONLY a JSON array of objects with these fields:
   priority    - integer 1-5 (5 = urgent)
 
 No prose, no markdown fences, just the raw JSON array.
-""" + SKILL
+"""
 
 
 class PlannerAgent(AgentShell):
@@ -28,10 +26,12 @@ class PlannerAgent(AgentShell):
         super().__init__("planner-1", capabilities=["plan"])
 
     async def _execute(self, packet: CXPPacket) -> str:
-        raw = await self.llm(SYSTEM, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}")
+        # fetched per-task (not at import time) so a reflect update is picked
+        # up on the very next task, from every replica, without a pod restart
+        skill = await self.get_skill("planner", fallback_path="/skills/planner_v1.md")
+        raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}")
 
-        # strip accidental markdown fences
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        raw = strip_code_fence(raw)
         sub_tasks: list[dict] = json.loads(raw)
 
         for task in sub_tasks:

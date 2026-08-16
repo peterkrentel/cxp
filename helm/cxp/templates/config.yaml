@@ -6,6 +6,11 @@ metadata:
   annotations:
     helm.sh/resource-policy: keep
 spec:
+  # ReadWriteOnce works today only because the kind cluster is single-node —
+  # multiple executor replicas can share it as long as they land on the same
+  # node. On a multi-node cluster this would block scheduling a replica onto
+  # a different node entirely; move to ReadWriteMany (or drop the PVC in
+  # favor of the KV_STATE-style shared store used for skills) before that.
   accessModes:
     - ReadWriteOnce
   resources:

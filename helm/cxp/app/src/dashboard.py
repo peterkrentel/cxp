@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .agent_shell import NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS
+from .agent_shell import KV_STATE, NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS
 from .memory import get_store
 from .packet import CXPPacket
 
@@ -37,6 +37,8 @@ class Dashboard:
         # Last completed output for viewing
         self.last_output: str = ""
         self.last_goal: str = ""
+        self.halt: dict | None = None
+        self._kv_cache: dict[str, object] = {}
 
     # ------------------------------------------------------------------ #
     # NATS listeners                                                       #
@@ -76,7 +78,9 @@ class Dashboard:
                     self.last_output = packet.payload.output
                     self.last_goal = packet.payload.goal or ""
 
-            if packet.type.value == "reflect" and packet.status.value == "done":
+            # capability, not type — PacketType has no ASSESS/DEPLOY value, so
+            # verifier labels deploy/assess/reflect packets all as type=REFLECT.
+            if packet.capability == "reflect" and packet.status.value == "done":
                 self.reflect_rewrites += 1
 
             icon = "✓" if packet.status.value == "done" else "✗" if packet.status.value == "error" else "⟳"
@@ -160,8 +164,10 @@ class Dashboard:
         t.add_row("LLM Calls", f"[cyan]{self.llm_calls}[/]")
         t.add_row("Skill Updates", f"[magenta]{self.reflect_rewrites}[/]")
         t.add_row("Status", activity_text)
-        
-        return Panel(t, title="[bold]Swarm Health[/]", border_style="cyan")
+        if self.halt:
+            t.add_row("HALTED", f"[bold red]{self.halt.get('reason', 'unknown error')}[/]")
+
+        return Panel(t, title="[bold]Swarm Health[/]", border_style="red" if self.halt else "cyan")
 
     def _render_log(self) -> Panel:
         lines = "\n".join(self.log_lines)
@@ -199,10 +205,26 @@ class Dashboard:
     # Entry point                                                          #
     # ------------------------------------------------------------------ #
 
+    async def _poll_halt(self, nc) -> None:
+        from nats.js.errors import NotFoundError
+        while True:
+            try:
+                js = nc.jetstream()
+                kv = await js.key_value(KV_STATE)
+                entry = await kv.get("halt")
+                data = json.loads(entry.value.decode())
+                self.halt = data if data.get("halted") else None
+            except NotFoundError:
+                self.halt = None
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
     async def run(self) -> None:
         nc = await nats.connect(NATS_URL)
         await nc.subscribe(SUBJECT_DASHBOARD, cb=self._on_dashboard)
         await nc.subscribe(SUBJECT_RESULTS, cb=self._on_result)
+        asyncio.create_task(self._poll_halt(nc))
 
         with Live(self._build_layout(), console=self.console, refresh_per_second=4, screen=True) as live:
             while True:

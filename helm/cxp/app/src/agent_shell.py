@@ -7,9 +7,11 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 
 import nats
 from nats.aio.client import Client as NATSClient
+from nats.js.errors import BadRequestError, NotFoundError
 
 from .memory import get_store
 from .packet import CXPPacket, PacketStatus, PacketType
@@ -25,6 +27,28 @@ SUBJECT_RESULTS   = "cxp.results"    # completed / failed packets
 SUBJECT_DASHBOARD = "cxp.dashboard"  # agent status events
 SUBJECT_THINKING  = "cxp.thinking"   # LLM stream + agent reasoning
 
+KV_SKILLS = "cxp-skills"  # bucket: skill file text, shared across all replicas
+KV_STATE  = "cxp-state"   # bucket: swarm-wide control state (e.g. halt flag)
+
+
+def strip_code_fence(text: str) -> str:
+    """Extract code from the first ```lang ... ``` fence, ignoring trailing prose.
+
+    Line-based on purpose: str.lstrip/rstrip take a *character set*, not a
+    literal prefix, so "```json".lstrip works by accident and mis-strips any
+    text that happens to start with one of those characters after the fence.
+    """
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.split("\n")
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "```":
+            end = i
+            break
+    return "\n".join(lines[1:end]).strip() if end is not None else text
+
 
 class AgentShell(ABC):
     """Deterministic wrapper around a non-deterministic LLM worker."""
@@ -34,10 +58,71 @@ class AgentShell(ABC):
         self.capabilities = set(capabilities)
         self._nc: NATSClient | None = None
         self._memory = get_store()
+        self._kv_cache: dict[str, object] = {}
 
     async def connect(self) -> None:
         self._nc = await nats.connect(NATS_URL)
         log.info("[%s] connected to NATS", self.agent_id)
+
+    async def _kv(self, bucket: str):
+        """Get-or-create a JetStream KV bucket, cached per agent instance."""
+        if bucket not in self._kv_cache:
+            js = self._nc.jetstream()
+            try:
+                self._kv_cache[bucket] = await js.key_value(bucket)
+            except NotFoundError:
+                try:
+                    self._kv_cache[bucket] = await js.create_key_value(bucket=bucket)
+                except BadRequestError:
+                    # lost a create race against another replica — it exists now
+                    self._kv_cache[bucket] = await js.key_value(bucket)
+        return self._kv_cache[bucket]
+
+    async def get_skill(self, name: str, fallback_path: str | None = None) -> str:
+        """Read the current skill text for `name`, shared across all replicas.
+
+        Falls back to the ConfigMap-seeded local file only if the KV bucket
+        has no entry yet (i.e. reflect hasn't written an update since deploy).
+        """
+        try:
+            kv = await self._kv(KV_SKILLS)
+            entry = await kv.get(name)
+            return entry.value.decode()
+        except Exception:
+            if fallback_path and os.path.exists(fallback_path):
+                return open(fallback_path).read()
+            return ""
+
+    async def put_skill(self, name: str, content: str) -> int:
+        """Write an updated skill file, visible to every replica on next read."""
+        kv = await self._kv(KV_SKILLS)
+        return await kv.put(name, content.encode())
+
+    async def is_halted(self) -> dict | None:
+        """Return the halt record if the swarm is currently paused, else None."""
+        try:
+            kv = await self._kv(KV_STATE)
+            entry = await kv.get("halt")
+            data = json.loads(entry.value.decode())
+            return data if data.get("halted") else None
+        except Exception:
+            return None
+
+    async def set_halt(self, reason: str, task_id: str = "") -> None:
+        """Pause swarm-wide packet intake after an unhandled agent error."""
+        kv = await self._kv(KV_STATE)
+        payload = json.dumps({
+            "halted": True,
+            "reason": reason,
+            "agent": self.agent_id,
+            "task_id": task_id,
+            "since": datetime.now(timezone.utc).isoformat(),
+        })
+        await kv.put("halt", payload.encode())
+
+    async def clear_halt(self) -> None:
+        kv = await self._kv(KV_STATE)
+        await kv.put("halt", json.dumps({"halted": False}).encode())
 
     async def disconnect(self) -> None:
         if self._nc:
@@ -56,6 +141,12 @@ class AgentShell(ABC):
             if packet.status != PacketStatus.PENDING:
                 return
 
+            halt = await self.is_halted()
+            if halt:
+                log.warning("[%s] swarm halted (%s) — dropping packet %s",
+                            self.agent_id, halt.get("reason"), packet.id[:8])
+                return
+
             packet.claim(self.agent_id)
             await self._emit_status("working", packet)
 
@@ -72,8 +163,10 @@ class AgentShell(ABC):
                 packet.fail(self.agent_id, str(exc))
                 self._memory.record_failure(self.agent_id, packet.capability)
                 await self._memory.save()
-                await self._think(f"✗ ERROR: {packet.id[:8]} — {exc}")
-                log.error("[%s] ✗ %s: %s", self.agent_id, packet.id[:8], exc)
+                reason = f"{self.agent_id} failed on {packet.capability} ({packet.id[:8]}): {exc}"
+                await self.set_halt(reason, task_id=packet.task_id)
+                await self._think(f"✗ ERROR: {packet.id[:8]} — {exc} — swarm halted, awaiting human")
+                log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], exc)
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")
@@ -116,7 +209,8 @@ class AgentShell(ABC):
             json.dumps({"agent": self.agent_id, "text": text}).encode())
 
     async def llm(self, system: str, user: str) -> str:
-        """Call Ollama with streaming; auto-pull model if not present."""
+        """Call Ollama with streaming. Auto-pull is disabled (see below) — a
+        missing model raises RuntimeError rather than silently pulling."""
         import httpx
 
         # connect=10s, first-token=30s, between-tokens=60s
@@ -126,6 +220,7 @@ class AgentShell(ABC):
 
         async def _stream(client: httpx.AsyncClient) -> str:
             chunks: list[str] = []
+            total_len = 0
             async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
                 "model": OLLAMA_MODEL, "stream": True,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -138,7 +233,8 @@ class AgentShell(ABC):
                         token = json.loads(line).get("message", {}).get("content", "")
                         if token:
                             chunks.append(token)
-                            if len("".join(chunks)) % 30 == 0:
+                            total_len += len(token)
+                            if total_len % 30 == 0:
                                 await self._nc.publish(SUBJECT_THINKING,
                                     json.dumps({"agent": self.agent_id, "text": token, "stream": True}).encode())
                     except Exception:

@@ -17,6 +17,9 @@ spec:
       labels:
         app: {{ printf "cxp-%s" $name }}
     spec:
+      {{- if eq $cfg.role "deployer" }}
+      serviceAccountName: cxp-deployer
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -43,6 +46,23 @@ spec:
             - { name: cm-src,    mountPath: /cm/src }
             - { name: cm-agents, mountPath: /cm/agents }
             - { name: cm-skills, mountPath: /cm/skills }
+        {{- if eq $cfg.role "deployer" }}
+        - name: kubectl
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              case "$(uname -m)" in
+                aarch64|arm64) ARCH=arm64 ;;
+                *) ARCH=amd64 ;;
+              esac
+              python3 -c "import urllib.request; urllib.request.urlretrieve('https://dl.k8s.io/release/v1.29.0/bin/linux/${ARCH}/kubectl', '/shared-bin/kubectl')"
+              chmod +x /shared-bin/kubectl
+          volumeMounts:
+            - { name: shared-bin, mountPath: /shared-bin }
+        {{- end }}
       containers:
         - name: agent
           image: python:3.12-slim
@@ -55,6 +75,10 @@ spec:
             - { name: CXP_SKILLS_DIR, value: /skills }
             - { name: CXP_MEMORY_PATH,value: /data/memory.json }
             - { name: PYTHONPATH,     value: /app/packages }
+            {{- if eq $cfg.role "deployer" }}
+            - { name: CXP_DEPLOY_NAMESPACE, value: cxp-sandbox }
+            - { name: PATH,           value: "/shared-bin:/usr/local/bin:/usr/bin:/bin" }
+            {{- end }}
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }
@@ -62,6 +86,9 @@ spec:
             - { name: app,    mountPath: /app }
             - { name: skills, mountPath: /skills }
             - { name: memory, mountPath: /data }
+            {{- if eq $cfg.role "deployer" }}
+            - { name: shared-bin, mountPath: /shared-bin }
+            {{- end }}
       volumes:
         - { name: app,       emptyDir: {} }
         - { name: skills,    emptyDir: {} }
@@ -70,4 +97,7 @@ spec:
         - { name: cm-agents, configMap: { name: cxp-app-agents } }
         - { name: cm-skills, configMap: { name: "{{ $.Values.skillsConfigMap }}" } }
         - { name: memory,    persistentVolumeClaim: { claimName: cxp-memory } }
+        {{- if eq $cfg.role "deployer" }}
+        - { name: shared-bin, emptyDir: {} }
+        {{- end }}
 {{- end }}

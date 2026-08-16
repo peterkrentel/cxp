@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ..agent_shell import AgentShell
+from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket, PacketType, Payload
 
 SYSTEM = """You are a capability assessor for an AI agent swarm.
@@ -39,7 +39,7 @@ class AssessorAgent(AgentShell):
             f"Generated artifact:\n{artifact[:2000]}"
         )
         raw = await self.llm(SYSTEM, prompt)
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        raw = strip_code_fence(raw)
 
         try:
             result = json.loads(raw)

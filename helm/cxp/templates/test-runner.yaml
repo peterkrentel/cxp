@@ -42,17 +42,49 @@ spec:
                 - sh
                 - -c
                 - |
+                  set +e
                   python -u /app/tests/run_tests.py
-                  # Push results to git if credentials are available
+                  TEST_EXIT=$?
+
+                  # Push results to git if credentials are available. Clones
+                  # the real main and commits on top of it (rather than
+                  # `git init` from scratch) so the push is a genuine
+                  # fast-forward instead of always being rejected and
+                  # silently swallowed by `|| true`.
                   if [ -f /git-creds/token ] && [ -f /git-creds/repo ]; then
-                    cd /app
-                    git init -q && git config user.email "cxp-bot@localhost" && git config user.name "CXP Test Runner"
                     REPO=$(cat /git-creds/repo)
                     TOKEN=$(cat /git-creds/token)
-                    git remote add origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git" 2>/dev/null || true
-                    git fetch origin main --depth=1 2>/dev/null || true
-                    git add tests/results/ && git commit -m "test results $(date +%Y%m%d_%H%M)" && git push origin HEAD:main || true
+                    rm -rf /tmp/repo-push
+                    if git clone -q --depth=1 "https://x-access-token:${TOKEN}@github.com/${REPO}.git" /tmp/repo-push; then
+                      cd /tmp/repo-push
+                      git config user.email "cxp-bot@localhost"
+                      git config user.name "CXP Test Runner"
+                      mkdir -p tests/results
+                      cp /app/tests/results/*.json tests/results/ 2>/dev/null || true
+                      git add tests/results/
+                      if git diff --cached --quiet; then
+                        echo "No new results to push"
+                      elif git commit -q -m "test results $(date +%Y%m%d_%H%M)" && git push -q origin HEAD:main; then
+                        echo "✓ Pushed test results to git"
+                      else
+                        echo "⚠ git push failed — see output above"
+                      fi
+                    else
+                      echo "⚠ git clone failed — skipping results push"
+                    fi
                   fi
+
+                  # Auto-cleanup: delete this job on success, keep it for
+                  # debugging on failure. Runs last, after the push above has
+                  # already completed, so it can no longer race its own
+                  # trailing git push (this used to happen from inside
+                  # run_tests.py, deleting the job mid-push).
+                  if [ "$TEST_EXIT" -eq 0 ] && [ -n "$JOB_NAME" ]; then
+                    kubectl delete job "$JOB_NAME" -n "$POD_NAMESPACE" \
+                      && echo "✓ Cleaned up job: $JOB_NAME" \
+                      || echo "Note: could not auto-delete job (ok for local dev)"
+                  fi
+                  exit "$TEST_EXIT"
               env:
                 - { name: NATS_URL,        value: "{{ $.Values.natsUrl }}" }
                 - { name: CXP_WEB_API,     value: "http://cxp-web:8080" }

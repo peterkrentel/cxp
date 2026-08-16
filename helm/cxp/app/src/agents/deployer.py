@@ -1,4 +1,6 @@
-"""Deployer agent — executes verified artifacts in a sandboxed namespace."""
+"""Deployer agent — applies YAML artifacts in a namespace-scoped kubectl apply.
+Python/shell artifacts run as a plain subprocess on this pod — NOT namespace-
+or network-isolated. Only the YAML path is actually sandboxed."""
 
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
-from ..agent_shell import AgentShell
+from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket
 
 log = logging.getLogger(__name__)
@@ -94,37 +96,24 @@ class DeployerAgent(AgentShell):
         log.info(f"Attempting deployment: {goal[:60]}")
 
         # Strip markdown code blocks (```language ... ```)
-        artifact_stripped = self._extract_from_markdown(artifact_stripped)
+        artifact_stripped = strip_code_fence(artifact_stripped)
 
         if self._looks_like_yaml(artifact_stripped):
             log.debug("Detected YAML artifact")
             return await self._deploy_yaml(artifact_stripped)
-        elif artifact_stripped.startswith("def ") or "import " in artifact_stripped or artifact_stripped.startswith("print("):
-            log.debug("Detected Python artifact")
-            return await self._run_python(artifact_stripped, goal)
+        # Shebang is a far more specific signal than a bare "import " substring
+        # match, so it must be checked first — a bash script that merely
+        # echoes the word "import" was previously misrouted to the Python path.
         elif artifact_stripped.startswith("#!/bin/bash") or artifact_stripped.startswith("#!/bin/sh"):
             log.debug("Detected shell script — wrapping as Python subprocess")
             py = f"import subprocess\nresult = subprocess.run(['bash','-c',{repr(artifact_stripped)}],capture_output=True,text=True,timeout=10)\nprint(result.stdout)\nif result.returncode != 0: raise RuntimeError(result.stderr)"
             return await self._run_python(py, goal)
+        elif artifact_stripped.startswith("def ") or "import " in artifact_stripped or artifact_stripped.startswith("print("):
+            log.debug("Detected Python artifact")
+            return await self._run_python(artifact_stripped, goal)
         else:
             log.warning(f"Unrecognized artifact type: {artifact_stripped[:100]}")
             return {"deployed": False, "reason": "unrecognized artifact type", "preview": artifact_stripped[:200]}
-
-    def _extract_from_markdown(self, text: str) -> str:
-        """Extract code from the first markdown code block, ignoring trailing prose."""
-        if not text.startswith("```"):
-            return text
-        lines = text.split("\n")
-        # skip the opening ```language line
-        start = 1
-        end = None
-        for i in range(start, len(lines)):
-            if lines[i].strip() == "```":
-                end = i
-                break
-        if end is not None:
-            return "\n".join(lines[start:end]).strip()
-        return text
 
     def _looks_like_yaml(self, text: str) -> bool:
         return any(text.startswith(k) for k in ("apiVersion:", "kind:", "---\napiVersion"))
@@ -168,10 +157,16 @@ class DeployerAgent(AgentShell):
             fname = f.name
 
         try:
+            # Minimal explicit env — don't hand generated code NATS_URL,
+            # OLLAMA_URL, or anything else this pod happens to carry.
+            minimal_env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "PYTHONPATH": "/app/packages",
+            }
             result = subprocess.run(
                 ["python3", fname],
                 capture_output=True, text=True, timeout=15,
-                env={**os.environ, "PYTHONPATH": "/app/packages"}
+                env=minimal_env,
             )
             return {
                 "deployed": result.returncode == 0,

@@ -198,6 +198,11 @@ def main():
             retry_id = submit_task(test["goal"])
             if retry_id:
                 retry_map[retry_id] = (test, r)
+            else:
+                # retry submission itself failed — don't silently drop the
+                # first-attempt result, or it counts toward neither pass nor fail
+                print(f"  ⚠️  [{r['label']}] retry submission failed — keeping first-attempt result")
+                results.append(r)
         else:
             results.append(r)
 
@@ -235,27 +240,37 @@ def main():
         low_score = [r for r in failed if r.get("score", 0) < 0.6 and r["status"] != "TIMEOUT"]
         wrong_format = [r for r in failed if any("No function" in i or "No type" in i or "Invalid YAML" in i for i in r.get("issues", []))]
 
+        # Track which failures get a targeted trigger below via id(), so the
+        # catch-all can fire for anything left over even when some *other*
+        # category is non-empty — previously it only fired when ALL three
+        # buckets were empty, so a genuinely uncategorized failure sitting
+        # alongside a categorized one never reached trigger_improvement at all.
+        handled_ids = set()
+
         if timeouts:
             labels = ", ".join(r["label"] for r in timeouts)
             print(f"  ⚠ Timeouts detected ({labels}) — agents may be overloaded or LLM slow")
             trigger_improvement("TIMEOUT", [f"Tests timed out: {labels}. Consider if planner is creating too many subtasks."])
+            handled_ids.update(id(r) for r in timeouts)
 
         if wrong_format:
             labels = ", ".join(r["label"] for r in wrong_format)
             all_issues = [i for r in wrong_format for i in r.get("issues", [])]
             print(f"  ⚠ Format failures ({labels}): {all_issues[:3]}")
             trigger_improvement("FORMAT", all_issues[:3])
+            handled_ids.update(id(r) for r in wrong_format)
 
         if low_score and not wrong_format:
             labels = ", ".join(r["label"] for r in low_score)
             print(f"  ⚠ Low quality scores ({labels}) — verifier found issues")
             issues = [i for r in low_score for i in r.get("issues", [])]
             trigger_improvement("QUALITY", issues[:3] or [f"Low scores on: {labels}"])
+            handled_ids.update(id(r) for r in low_score)
 
-        if not timeouts and not wrong_format and not low_score:
-            for r in failed:
-                print(f"  ⚠ {r['label']}: {r.get('reason', r['status'])}")
-                trigger_improvement(r["label"], [r.get("reason", "unknown failure")])
+        uncovered = [r for r in failed if id(r) not in handled_ids]
+        for r in uncovered:
+            print(f"  ⚠ {r['label']}: {r.get('reason', r['status'])}")
+            trigger_improvement(r["label"], [r.get("reason", "unknown failure")])
 
         print(f"\n  → {len(failed)} reflect task(s) submitted — next run should improve")
     else:
@@ -269,23 +284,10 @@ def main():
         json.dump({"timestamp": ts, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
     print(f"\nResults saved: tests/results/run_{ts}.json")
 
-    # Auto-cleanup: delete job on success, keep for debugging on failure
-    if passed == len(results):
-        try:
-            import subprocess
-            job_name = os.environ.get("JOB_NAME", "")
-            namespace = os.environ.get("POD_NAMESPACE", "cxp")
-            if job_name:
-                result = subprocess.run(
-                    ["kubectl", "delete", "job", job_name, "-n", namespace],
-                    capture_output=True, timeout=10
-                )
-                if result.returncode == 0:
-                    print(f"✓ Cleaned up job: {job_name}")
-                else:
-                    print(f"  Note: Could not auto-delete job (ok for local dev)")
-        except Exception as e:
-            print(f"  Note: Job cleanup skipped ({type(e).__name__})")
+    # Job cleanup (kubectl delete on success) is handled by the wrapping shell
+    # script in test-runner.yaml, *after* the git push step — deleting this
+    # job from inside this same process raced its own trailing git push.
+    sys.exit(0 if passed == len(results) else 1)
 
 
 if __name__ == "__main__":

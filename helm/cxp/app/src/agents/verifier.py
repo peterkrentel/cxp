@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
-from ..agent_shell import AgentShell
+from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 log = logging.getLogger(__name__)
-SKILL = open("/skills/verifier_v1.md").read() if os.path.exists("/skills/verifier_v1.md") else ""
 
-SYSTEM = """You are a verification specialist in a distributed AI swarm.
+BASE_SYSTEM = """You are a verification specialist in a distributed AI swarm.
 Given an artifact and its original goal, evaluate:
 1. Correctness — does it achieve the goal?
 2. Completeness — is anything missing?
@@ -26,7 +24,7 @@ Return ONLY a JSON object:
   "suggestion": "one sentence on biggest improvement if failed"
 }
 No prose, no fences.
-""" + SKILL
+"""
 
 
 class VerifierAgent(AgentShell):
@@ -34,13 +32,14 @@ class VerifierAgent(AgentShell):
         super().__init__("verifier-1", capabilities=["verify"])
 
     async def _execute(self, packet: CXPPacket) -> str:
+        skill = await self.get_skill("verifier", fallback_path="/skills/verifier_v1.md")
         prompt = (
             f"Original goal: {packet.payload.goal}\n\n"
             f"Artifact to verify:\n{packet.payload.context}"
         )
-        raw = await self.llm(SYSTEM, prompt)
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        
+        raw = await self.llm(BASE_SYSTEM + skill, prompt)
+        raw = strip_code_fence(raw)
+
         # Better error handling for JSON parsing
         try:
             result = json.loads(raw)
@@ -49,7 +48,7 @@ class VerifierAgent(AgentShell):
             # Default to fail if we can't parse
             result = {"score": 0.0, "passed": False, "issues": [f"Parse error: {e}"], "suggestion": "Malformed response"}
 
-        packet.quality_score = float(result.get("score", 0.5))
+        packet.quality_score = float(result.get("score") if result.get("score") is not None else 0.5)
 
         if not result.get("passed", False):
             # spawn a reflect packet so the system can learn
@@ -93,7 +92,7 @@ class VerifierAgent(AgentShell):
         await self.emit_packet(assess)
 
         # Spawn deploy packet if score is high enough
-        if packet.quality_score and packet.quality_score >= 0.85:
+        if packet.quality_score is not None and packet.quality_score >= 0.85:
             deploy = CXPPacket(
                 origin=self.agent_id,
                 type=PacketType.REFLECT,

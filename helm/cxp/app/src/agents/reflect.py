@@ -12,6 +12,7 @@ from ..packet import CXPPacket
 log = logging.getLogger(__name__)
 
 SKILLS_DIR = Path(os.environ.get("CXP_SKILLS_DIR", "/skills"))
+SKILL_TARGET = "executor"  # the only skill reflect currently maintains
 
 SYSTEM = """You are the self-improvement agent in a distributed AI swarm.
 You receive a failure report and the current skill file for an agent.
@@ -26,9 +27,13 @@ class ReflectAgent(AgentShell):
         super().__init__("reflect-1", capabilities=["reflect"])
 
     async def _execute(self, packet: CXPPacket) -> str:
-        skill_file = SKILLS_DIR / "executor_v1.md"
-        current = skill_file.read_text() if skill_file.exists() else "(no existing skill)"
-        log.info("[reflect] skill_file=%s exists=%s instructions=%s", skill_file, skill_file.exists(), packet.payload.instructions[:80])
+        # KV is the source of truth (visible to every replica); the local
+        # ConfigMap-seeded file only matters before the first ever KV write.
+        current = await self.get_skill(SKILL_TARGET, fallback_path=str(SKILLS_DIR / f"{SKILL_TARGET}_v1.md"))
+        if not current:
+            current = "(no existing skill)"
+        log.info("[reflect] target=%s has_current=%s instructions=%s",
+                  SKILL_TARGET, bool(current), packet.payload.instructions[:80])
 
         prompt = (
             f"Current skill file:\n{current}\n\n"
@@ -37,21 +42,15 @@ class ReflectAgent(AgentShell):
         )
         improved = await self.llm(SYSTEM, prompt)
 
-        # version the old skill before overwriting
-        version = self._next_version(skill_file)
-        if skill_file.exists():
-            skill_file.rename(SKILLS_DIR / f"executor_v{version - 1}.md.bak")
-
-        skill_file.write_text(improved)
+        # JetStream KV versions every put() with an atomic revision number —
+        # no separate .bak/glob bookkeeping needed, and no race between
+        # concurrent reflect runs computing the same "next version".
+        revision = await self.put_skill(SKILL_TARGET, improved)
 
         # record the improvement as a semantic fact
         self._memory.add_semantic(
-            f"Skill executor updated to v{version}: {packet.payload.instructions[:120]}"
+            f"Skill {SKILL_TARGET} updated to rev{revision}: {packet.payload.instructions[:120]}"
         )
         await self._memory.save()
 
-        return f"Skill file updated to version {version}. Changes committed."
-
-    def _next_version(self, path: Path) -> int:
-        baks = list(path.parent.glob("executor_v*.md.bak"))
-        return len(baks) + 2
+        return f"Skill '{SKILL_TARGET}' updated to revision {revision}. Live for all replicas."

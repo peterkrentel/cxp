@@ -15,7 +15,7 @@ from nats.js import api
 from nats.js.errors import BadRequestError, NotFoundError
 
 from .memory import get_store
-from .packet import CXPPacket, PacketStatus, PacketType
+from .packet import CXPPacket, PacketStatus, PacketType, Payload
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +61,12 @@ def strip_code_fence(text: str) -> str:
 
 class AgentShell(ABC):
     """Deterministic wrapper around a non-deterministic LLM worker."""
+
+    # Set True only on agents that must keep working while the swarm is
+    # halted (e.g. diagnostician — it exists specifically to investigate a
+    # halt, so it can't be subject to the same halt-drops-every-packet rule
+    # as everyone else).
+    BYPASS_HALT_CHECK: bool = False
 
     def __init__(self, agent_id: str, capabilities: list[str]) -> None:
         self.agent_id   = agent_id
@@ -171,7 +177,7 @@ class AgentShell(ABC):
                 return
 
             halt = await self.is_halted()
-            if halt:
+            if halt and not self.BYPASS_HALT_CHECK:
                 log.warning("[%s] swarm halted (%s) — dropping packet %s",
                             self.agent_id, halt.get("reason"), packet.id[:8])
                 await msg.ack()
@@ -201,6 +207,7 @@ class AgentShell(ABC):
                 await self.set_halt(reason, task_id=packet.task_id)
                 await self._think(f"✗ ERROR: {packet.id[:8]} — {detail} — swarm halted, awaiting human")
                 log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], detail, exc_info=True)
+                await self._emit_diagnose_request(packet, detail)
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")
@@ -240,6 +247,26 @@ class AgentShell(ABC):
         subject = f"cxp.cap.{packet.capability}"
         js = self._nc.jetstream()
         await js.publish(subject, packet.model_dump_json().encode())
+
+    async def _emit_diagnose_request(self, failed_packet: CXPPacket, detail: str) -> None:
+        """Fired on every halt, regardless of which agent crashed — hands the
+        raw exception detail to the diagnostician so it can investigate
+        while the swarm sits halted, instead of a human being the only
+        thing that ever looks at why."""
+        diagnose = CXPPacket(
+            origin=self.agent_id,
+            type=PacketType.DIAGNOSE,
+            capability="diagnose",
+            priority=5,
+            task_id=failed_packet.task_id,
+            parent_packet_id=failed_packet.id,
+            payload=Payload(
+                goal="Diagnose swarm halt and propose resolution",
+                instructions=detail,
+                context=f"agent={self.agent_id} capability={failed_packet.capability} packet_id={failed_packet.id}",
+            ),
+        )
+        await self.emit_packet(diagnose)
 
     async def _publish(self, subject: str, packet: CXPPacket) -> None:
         await self._nc.publish(subject, packet.model_dump_json().encode())

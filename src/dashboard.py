@@ -166,6 +166,8 @@ class Dashboard:
         t.add_row("Status", activity_text)
         if self.halt:
             t.add_row("HALTED", f"[bold red]{self.halt.get('reason', 'unknown error')}[/]")
+            if self.halt.get("diagnosis"):
+                t.add_row("Diagnosis", f"[yellow]🩺 {self.halt['diagnosis']}[/]\n[dim]{self.halt.get('suggested_action', '')}[/]")
 
         return Panel(t, title="[bold]Swarm Health[/]", border_style="red" if self.halt else "cyan")
 

@@ -160,13 +160,17 @@ class AgentShell(ABC):
                 await self._think(f"✓ DONE: {packet.id[:8]} — {len(output)} chars")
                 log.info("[%s] ✓ %s", self.agent_id, packet.id[:8])
             except Exception as exc:
-                packet.fail(self.agent_id, str(exc))
+                # str(exc) is empty for some exception types (e.g. httpx's
+                # timeout errors) — fall back to repr() so the halt reason
+                # and logs always name at least the exception class.
+                detail = str(exc) or repr(exc)
+                packet.fail(self.agent_id, detail)
                 self._memory.record_failure(self.agent_id, packet.capability)
                 await self._memory.save()
-                reason = f"{self.agent_id} failed on {packet.capability} ({packet.id[:8]}): {exc}"
+                reason = f"{self.agent_id} failed on {packet.capability} ({packet.id[:8]}): {detail}"
                 await self.set_halt(reason, task_id=packet.task_id)
-                await self._think(f"✗ ERROR: {packet.id[:8]} — {exc} — swarm halted, awaiting human")
-                log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], exc)
+                await self._think(f"✗ ERROR: {packet.id[:8]} — {detail} — swarm halted, awaiting human")
+                log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], detail, exc_info=True)
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")

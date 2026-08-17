@@ -34,6 +34,11 @@ KV_SKILLS = "cxp-skills"        # bucket: skill file text, shared across all rep
 KV_STATE  = "cxp-state"         # bucket: swarm-wide control state (e.g. halt flag)
 KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a request
                                       # actually in flight right now, cross-pod
+KV_INFLIGHT = "cxp-inflight"    # bucket: packet ids currently being executed --
+                                # an idempotency fence so a JetStream redelivery
+                                # of a packet another replica is still (or was
+                                # already) working on becomes a harmless no-op
+                                # ack instead of a second real execution.
 
 # A slot claim older than this is treated as abandoned (its holder crashed or
 # got killed without releasing) and gets pruned on the next acquire attempt,
@@ -43,6 +48,14 @@ KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a re
 # when the heartbeat mechanism let that ceiling go from 240s to 900s.
 OLLAMA_SLOT_STALE_SECONDS = 960
 OLLAMA_SLOT_POLL_SECONDS = 1.0
+
+# How long an in-flight claim is honored before it's assumed abandoned (holder
+# crashed without releasing it) rather than genuinely still running. Must
+# stay >= LLM_TOTAL_TIMEOUT (900s) for the same reason as OLLAMA_SLOT_STALE_
+# SECONDS above -- a legitimately-still-running call must never be mistaken
+# for an abandoned one and get its result silently discarded by a second
+# worker that thinks it's now free to take over.
+INFLIGHT_STALE_SECONDS = 960
 
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
 # published while no replica happens to be subscribed (mid-rollout, pod
@@ -224,6 +237,53 @@ class AgentShell(ABC):
             except Exception:
                 continue
 
+    async def _claim_packet(self, packet_id: str) -> bool:
+        """Atomically claim a packet id for execution. Returns False if
+        another delivery of the same packet already holds a live claim --
+        the caller must then just ack and skip, not execute again.
+
+        This exists because JetStream's delivery guarantee is at-least-once,
+        not exactly-once: a heartbeat ping delayed even once past ack_wait
+        (observed live 2026-08-17 under heavy concurrent load, cause not yet
+        pinned down) triggers a real redelivery to another consumer while the
+        first copy keeps running to completion regardless -- both then
+        publish a "done" result and both run any real side effects (skill
+        writes, deploys) a second time. Fixing that requires this fence
+        regardless of whether the underlying heartbeat-miss ever gets fully
+        root-caused: JetStream permits redelivery by design, so exactly-once
+        execution has to be enforced here, not assumed from ack_wait alone.
+        """
+        kv = await self._kv(KV_INFLIGHT)
+        now = time.time()
+        try:
+            await kv.create(packet_id, json.dumps({"agent": self.agent_id, "ts": now}).encode())
+            return True
+        except Exception:
+            pass
+        try:
+            entry = await kv.get(packet_id)
+            claim = json.loads(entry.value.decode())
+        except Exception:
+            # Couldn't read the existing claim to check its age -- fail open
+            # toward re-execution rather than silently dropping a packet
+            # forever on a transient KV read error.
+            return True
+        if now - claim.get("ts", 0) < INFLIGHT_STALE_SECONDS:
+            return False
+        try:
+            await kv.update(packet_id, json.dumps({"agent": self.agent_id, "ts": now}).encode(),
+                             last=entry.revision)
+            return True
+        except Exception:
+            return False  # lost the race to whoever else just reclaimed it
+
+    async def _release_packet_claim(self, packet_id: str) -> None:
+        kv = await self._kv(KV_INFLIGHT)
+        try:
+            await kv.delete(packet_id)
+        except Exception:
+            pass  # best-effort tidy-up; a stale leftover just expires later
+
     async def disconnect(self) -> None:
         if self._nc:
             await self._nc.drain()
@@ -256,6 +316,13 @@ class AgentShell(ABC):
                 await msg.ack()
                 return
 
+            if not await self._claim_packet(packet.id):
+                log.warning("[%s] packet %s already claimed by another delivery — "
+                            "acking as a duplicate redelivery, not re-executing",
+                            self.agent_id, packet.id[:8])
+                await msg.ack()
+                return
+
             packet.claim(self.agent_id)
             await self._emit_status("working", packet)
 
@@ -272,8 +339,9 @@ class AgentShell(ABC):
                     await asyncio.sleep(90)
                     try:
                         await msg.in_progress()
-                    except Exception:
-                        pass  # best-effort; a missed heartbeat isn't fatal on its own
+                        log.info("[%s] heartbeat sent for %s", self.agent_id, packet.id[:8])
+                    except Exception as exc:
+                        log.error("[%s] heartbeat FAILED for %s: %r", self.agent_id, packet.id[:8], exc)
 
             heartbeat_task = asyncio.create_task(_heartbeat())
             try:
@@ -304,6 +372,7 @@ class AgentShell(ABC):
                     await heartbeat_task
                 except asyncio.CancelledError:
                     pass
+                await self._release_packet_claim(packet.id)
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")

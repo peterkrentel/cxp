@@ -63,6 +63,51 @@ async def get_halt() -> dict | None:
         return None
 
 
+# Every question asked by hand tonight while chasing a live duplicate-
+# processing bug -- "is anything actually processing right now", "did that
+# fix actually stop the duplicates" -- required a kubectl/nats CLI round
+# trip nobody but an operator with cluster access could run. Surfacing the
+# same two signals here means a browser tab answers both without asking.
+CAPABILITIES = ["plan", "code", "verify", "reflect", "assess", "deploy", "diagnose"]
+STREAM_PACKETS = "CXP_PACKETS"
+
+
+async def get_stream_health() -> list[dict]:
+    if not _nc:
+        return []
+    js = _nc.jetstream()
+    out = []
+    for cap in CAPABILITIES:
+        durable = f"cxp-{cap}"
+        try:
+            info = await js.consumer_info(STREAM_PACKETS, durable)
+            out.append({
+                "capability": cap,
+                "outstanding_acks": info.num_ack_pending,
+                "redelivered": info.num_redelivered,
+                "pending": info.num_pending,
+            })
+        except Exception as exc:
+            out.append({"capability": cap, "error": str(exc)})
+    return out
+
+
+def get_duplicate_packets() -> list[dict]:
+    """Any packet id completed more than once in the current in-memory
+    buffer -- the direct symptom of the 2026-08-17 duplicate-processing
+    bug. Computed from packets this dashboard process has already seen
+    (state["packets"]), not a new subscription, so it only reflects
+    activity since this pod last started."""
+    by_id: dict[str, list[dict]] = {}
+    for p in state["packets"]:
+        by_id.setdefault(p["id"], []).append(p)
+    return [
+        {"id": pid, "capability": entries[0].get("capability"),
+         "timestamps": [e["timestamp"] for e in entries]}
+        for pid, entries in by_id.items() if len(entries) > 1
+    ]
+
+
 async def subscribe_nats():
     global _nc
     try:
@@ -248,6 +293,11 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
   <div class="stat-box"><div class="stat-val y" id="s-idle">-</div><div class="d">Last Activity</div></div>
 </div>
 
+<div class="panel" id="dup-banner" style="display:none; border-color:#ff4444; background:#2a0a0a; color:#ff6666; margin-bottom:8px">
+  <div>⚠ DUPLICATE PACKET COMPLETIONS DETECTED — a packet finished more than once since this dashboard last restarted. This is the exact symptom of the 2026-08-17 redelivery bug; if this reappears after a fix has been deployed, that fix isn't holding.</div>
+  <table style="margin-top:4px"><thead><tr><th>Packet</th><th>Cap</th><th>Times seen</th></tr></thead><tbody id="dup-rows"></tbody></table>
+</div>
+
 <div class="row">
   <div class="panel">
     <div class="panel-title">Agents</div>
@@ -256,6 +306,10 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
   <div class="panel">
     <div class="panel-title">Reputation</div>
     <table><thead><tr><th>Agent</th><th>Cap</th><th>Score</th><th>✓/✗</th></tr></thead><tbody id="rep"></tbody></table>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Queue Health — is anything stuck?</div>
+    <table><thead><tr><th>Cap</th><th>Pending</th><th>In-flight</th><th>Redelivered</th></tr></thead><tbody id="health"></tbody></table>
   </div>
 </div>
 
@@ -350,6 +404,26 @@ async function refresh() {
     const c = r.score>=0.8?'g':r.score>=0.5?'y':'r';
     return `<tr><td class="c">${r.agent}</td><td>${r.capability}</td><td class="${c}">${(r.score*100).toFixed(0)}%</td><td class="d">${r.successes}/${r.failures}</td></tr>`;
   }).join('');
+
+  // "Nothing outstanding at all" for a capability with no active agent for
+  // it is normal, not stuck -- redelivered>0 just means JetStream resent a
+  // message at some point (could be an old restart), not an active problem
+  // on its own. The duplicate-completions banner below is the real signal.
+  document.getElementById('health').innerHTML = (data.stream_health||[]).map(h => {
+    if (h.error) return `<tr><td class="c">${h.capability}</td><td class="d" colspan="3">unavailable</td></tr>`;
+    const redC = h.redelivered > 0 ? 'y' : 'g';
+    return `<tr><td class="c">${h.capability}</td><td>${h.pending}</td><td>${h.outstanding_acks}</td><td class="${redC}">${h.redelivered}</td></tr>`;
+  }).join('');
+
+  const dupBanner = document.getElementById('dup-banner');
+  if ((data.duplicate_packets||[]).length > 0) {
+    dupBanner.style.display = 'block';
+    document.getElementById('dup-rows').innerHTML = data.duplicate_packets.map(d =>
+      `<tr><td class="d">${d.id}</td><td>${d.capability}</td><td class="r">${d.timestamps.length}</td></tr>`
+    ).join('');
+  } else {
+    dupBanner.style.display = 'none';
+  }
 
   // Packets table only ever holds FINISHED packets (on_result fires on
   // done/error) — nothing in-flight ever appears there on its own. Show
@@ -450,4 +524,6 @@ async def get_state():
         "reputation": reputation,
         "last_activity": state["last_activity"],
         "halt": await get_halt(),
+        "stream_health": await get_stream_health(),
+        "duplicate_packets": get_duplicate_packets(),
     })

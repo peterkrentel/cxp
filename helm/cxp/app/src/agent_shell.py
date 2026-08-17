@@ -151,6 +151,17 @@ class AgentShell(ABC):
         kv = await self._kv(KV_STATE)
         await kv.put("halt", json.dumps({"halted": False}).encode())
 
+    async def record_validation_failure(self, context: str, detail: str) -> None:
+        """Persist a non-fatal LLM-output validation failure (a skipped
+        malformed sub-task, a degraded-gracefully JSON parse error) to
+        durable memory instead of only the pod's ephemeral stdout log --
+        these used to just vanish on the next restart with no trace they
+        ever happened, making it impossible to see how often a given
+        failure shape actually recurs."""
+        log.error("[%s] validation failure (%s): %s", self.agent_id, context, detail)
+        self._memory.add_semantic(f"[{self.agent_id}] {context}: {detail[:300]}")
+        await self._memory.save()
+
     async def disconnect(self) -> None:
         if self._nc:
             await self._nc.drain()

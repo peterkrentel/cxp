@@ -1,0 +1,5 @@
+# Test-only dependencies -- not installed into agent pod images (those use
+# requirements.txt only, see helm/cxp/templates/agents.yaml's assemble
+# initContainer). Install with: pip install -r requirements.txt -r requirements-dev.txt
+pytest==8.3.3
+pytest-asyncio==0.24.0

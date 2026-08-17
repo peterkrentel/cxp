@@ -2,6 +2,11 @@
 
 Where the test suite is today, and what happens next — written down so it isn't a mystery next time someone (including future-you) looks at this folder.
 
+Two separate suites live here, at two different levels:
+
+- **`tests/unit/`** — fast, deterministic pytest tests of agent-level control-plane logic (the ollama semaphore, the packet idempotency fence, diagnostician's timeout classification, planner's decomposition edge cases), run on every PR via CI's `unit-tests` job. No cluster, no LLM, no network — a fake JetStream KV (`tests/unit/conftest.py`) stands in for the real one. Added 2026-08-17 after a live duplicate-packet-processing bug shipped with no test coverage at all; run with `pytest tests/unit`.
+- **Everything below this line** is the *other* suite — `run_tests.py`, an end-to-end suite against a live swarm with a real (small, non-deterministic) LLM, run hourly by the in-cluster CronJob, not on every PR.
+
 ## Where we are: three tiers, run hourly by the CronJob
 
 1. **Tier 0 — smoke test.** One trivial task ("print hello world"), always first. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X." The suite still continues after a smoke failure, for more signal.

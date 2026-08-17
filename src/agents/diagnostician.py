@@ -33,7 +33,16 @@ OLLAMA_SMALL_URL = os.environ.get("OLLAMA_SMALL_URL", OLLAMA_URL)
 # string already captured by AgentShell's halt reason. Still used to decide
 # whether it's safe to skip the LLM call (see BASE_SYSTEM docstring below),
 # not to decide whether to auto-clear anymore.
-TRANSIENT_EXCEPTIONS = ("ReadTimeout", "ConnectTimeout", "ConnectError", "PoolTimeout", "TimeoutError")
+#
+# "exceeded total budget" matches AgentShell.llm()'s own raised message
+# verbatim -- str(TimeoutError("some message")) returns just the message
+# text, NOT prefixed with the class name, so the class-name substrings
+# above never actually matched this specific exception. Found live
+# (2026-08-17): a genuine 240s total-budget timeout got misclassified as
+# non-timeout, routed to the LLM-diagnosis path instead of the
+# evidence-based one, and that LLM call itself then failed to parse too.
+TRANSIENT_EXCEPTIONS = ("ReadTimeout", "ConnectTimeout", "ConnectError", "PoolTimeout",
+                         "TimeoutError", "exceeded total budget")
 
 # Recognized and surfaced in the diagnosis text, not acted on unilaterally --
 # "this keeps happening" is exactly the kind of pattern a human should see,

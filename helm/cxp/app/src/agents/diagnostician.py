@@ -77,6 +77,7 @@ class DiagnosticianAgent(AgentShell):
         is_timeout_class = any(name in exc_detail for name in TRANSIENT_EXCEPTIONS)
         pod_metrics = await self._fetch_pod_metrics()
         ollama_state = await self._fetch_ollama_state()
+        ollama_request_log = await self._fetch_ollama_request_log()
 
         if is_timeout_class:
             # No LLM call in this path on purpose: an LLM-authored "is this
@@ -93,7 +94,11 @@ class DiagnosticianAgent(AgentShell):
             diagnosis = (
                 f"Timeout-class failure ({exc_detail}) from {halt.get('agent')}.{recurrence_note} "
                 f"Pod CPU/memory at halt time:\n{pod_metrics}\n"
-                f"Ollama instance state:\n{ollama_state}"
+                f"Ollama instance state:\n{ollama_state}\n"
+                f"Ollama's own recent request log (real duration + status per call -- "
+                f"check whether the failing request actually succeeded server-side just "
+                f"past the client's timeout, like a real incident found live 2026-08-17):\n"
+                f"{ollama_request_log}"
             )
             suggested_action = (
                 "Recurring resource contention — consider the quantization/model-swap or GPU-serving "
@@ -120,6 +125,7 @@ class DiagnosticianAgent(AgentShell):
             f"Recent verifier scores (last {len(recent_scores)} of 20): {recent_scores}\n"
             f"Pod CPU/memory in cxp namespace (kubectl top pods):\n{pod_metrics}\n"
             f"Ollama instance state (/api/ps, models currently loaded/running):\n{ollama_state}\n"
+            f"Ollama's own recent request log (real duration + status per call):\n{ollama_request_log}\n"
         )
         result = await self._diagnose(prompt)
         await self._think(f"🩺 diagnosis: {result.get('diagnosis', '')[:200]} — awaiting human")
@@ -193,6 +199,33 @@ class DiagnosticianAgent(AgentShell):
             return stdout.decode().strip() or f"no metrics returned ({stderr.decode().strip()[:200]})"
         except Exception as exc:
             return f"metrics unavailable: {exc!r}"
+
+    async def _fetch_ollama_request_log(self, tail: int = 60) -> str:
+        """Ollama's own access log records the *actual* duration and status
+        of every request it served -- the exact signal that revealed a real
+        request tonight (2026-08-17) actually succeeded server-side in
+        59.999922528s, a hair under a 60s client timeout that killed it
+        anyway. This automates the manual `kubectl logs` archaeology that
+        took a live investigation to piece together the first two times."""
+        lines = []
+        # Selecting by pod label, not `deploy/name` -- the latter needs
+        # kubectl to read the Deployment resource first to resolve which
+        # pods it owns, which would need an RBAC grant this agent
+        # deliberately doesn't have (read-only on pods/pod-metrics only).
+        for label, pod_label in (("main", "app.kubernetes.io/name=ollama"),
+                                  ("small", "app.kubernetes.io/name=ollama-small")):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "kubectl", "logs", "-n", "cxp", "-l", pod_label, "--tail", str(tail),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+                chat_lines = [line for line in stdout.decode().splitlines() if "/api/chat" in line]
+                body = "\n".join(chat_lines[-10:]) or "(no recent /api/chat requests in log tail)"
+                lines.append(f"{label}:\n{body}")
+            except Exception as exc:
+                lines.append(f"{label}: unavailable — {exc!r}")
+        return "\n".join(lines)
 
     async def _fetch_ollama_state(self) -> str:
         import httpx

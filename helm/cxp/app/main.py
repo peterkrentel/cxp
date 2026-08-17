@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 
 
 def main() -> None:
+    # Without this, log.info()/log.warning()/log.error() calls throughout
+    # agent_shell.py and the agents are silently dropped -- Python's root
+    # logger has no handler unless something calls basicConfig, so nothing
+    # ever reached `kubectl logs`. Found live 2026-08-17 chasing a heartbeat
+    # bug: a 2-minute wait for "heartbeat sent"/"heartbeat FAILED" log lines
+    # found neither, which looked like evidence about the heartbeat itself
+    # but was really just this gap -- the calls were firing the whole time.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     role = sys.argv[1] if len(sys.argv) > 1 else "dashboard"
 
     if role == "planner":

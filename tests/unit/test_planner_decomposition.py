@@ -1,0 +1,98 @@
+"""Planner's decomposition step -- three real crashes found live and fixed
+2026-08-17, none of which had a regression test until now:
+
+1. capability defaulting to "any", a subject nobody subscribes to, silently
+   losing sub-tasks with no error at all.
+2. a malformed JSON decomposition crashing _execute() uncaught, halting the
+   whole swarm over one goal's LLM hiccup.
+3. a list-valued goal/instructions field (small models occasionally emit
+   several bullet points instead of one string) raising a pydantic
+   ValidationError that killed the entire decomposition, not just that one
+   sub-task.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock
+
+import pytest
+
+from src.agents.planner import PlannerAgent, _coerce_str
+from src.packet import CXPPacket, PacketType, Payload
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("already a string", "already a string"),
+    (["point one", "point two"], "point one point two"),
+    (None, ""),
+    (42, "42"),
+])
+def test_coerce_str(value, expected):
+    assert _coerce_str(value) == expected
+
+
+def _goal_packet() -> CXPPacket:
+    return CXPPacket(type=PacketType.PLAN, capability="plan", payload=Payload(goal="build a thing"))
+
+
+async def _planner(monkeypatch, llm_response: str) -> tuple[PlannerAgent, AsyncMock]:
+    p = PlannerAgent()
+    monkeypatch.setattr(p._memory, "save", AsyncMock())
+    monkeypatch.setattr(p, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(p, "llm", AsyncMock(return_value=llm_response))
+    emitted = AsyncMock()
+    monkeypatch.setattr(p, "emit_packet", emitted)
+    return p, emitted
+
+
+async def test_malformed_json_degrades_gracefully_instead_of_crashing(monkeypatch):
+    p, emitted = await _planner(monkeypatch, "not valid json at all {{{")
+
+    result = await p._execute(_goal_packet())
+
+    assert "malformed JSON" in result
+    emitted.assert_not_called()
+
+
+async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):
+    sub_tasks = [{"type": "code", "goal": "write a function", "instructions": "do it"}]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+
+    await p._execute(_goal_packet())
+
+    emitted.assert_awaited_once()
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.capability == "code"  # not "any" -- "any" has no consumer
+
+
+async def test_list_valued_goal_field_is_coerced_not_crashed_on(monkeypatch):
+    sub_tasks = [{
+        "type": "code",
+        "capability": "code",
+        "goal": ["first point", "second point"],
+        "instructions": "do it",
+    }]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+
+    result = await p._execute(_goal_packet())
+
+    emitted.assert_awaited_once()
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.payload.goal == "first point second point"
+    assert "Spawned 1 sub-packets" in result
+
+
+async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
+    sub_tasks = [
+        {"type": "not-a-real-type", "capability": "code", "goal": "bad", "instructions": "x"},
+        {"type": "code", "capability": "code", "goal": "good one", "instructions": "y"},
+    ]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+
+    result = await p._execute(_goal_packet())
+
+    emitted.assert_awaited_once()
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.payload.goal == "good one"
+    assert "Spawned 2 sub-packets" in result

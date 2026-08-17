@@ -1,15 +1,16 @@
 name: CI — deploy validation
 
-# Infrastructure-only gate: does the Helm chart actually deploy cleanly in a
-# real Kubernetes cluster? Does NOT run the LLM test suite or pull any Ollama
-# models — that stays the in-cluster hourly CronJob's job. A small local
-# model is inherently non-deterministic (confirmed repeatedly in this
-# project's own history), and a PR gate that can fail for reasons unrelated
-# to the actual code change erodes trust in the gate fast. This workflow
-# instead catches the class of bug that already bit this project several
-# times: RBAC misconfiguration, resource-limit typos, bad image references,
-# template mistakes — things that are deterministic and worth blocking a
-# merge on.
+# Two gates: fast deterministic unit tests (tests/unit, mocked KV/NATS --
+# no live cluster), then an infrastructure-only check that the Helm chart
+# actually deploys cleanly in a real Kubernetes cluster. Neither runs the
+# LLM test suite or pulls any Ollama models — that stays the in-cluster
+# hourly CronJob's job. A small local model is inherently non-deterministic
+# (confirmed repeatedly in this project's own history), and a PR gate that
+# can fail for reasons unrelated to the actual code change erodes trust in
+# the gate fast. deploy-check instead catches the class of bug that already
+# bit this project several times: RBAC misconfiguration, resource-limit
+# typos, bad image references, template mistakes — things that are
+# deterministic and worth blocking a merge on.
 
 on:
   pull_request:
@@ -19,6 +20,22 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit -v
+
   deploy-check:
     runs-on: ubuntu-latest
     timeout-minutes: 15

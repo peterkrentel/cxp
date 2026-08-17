@@ -259,15 +259,35 @@ class AgentShell(ABC):
             await kv.create(packet_id, json.dumps({"agent": self.agent_id, "ts": now}).encode())
             return True
         except Exception:
-            pass
-        try:
-            entry = await kv.get(packet_id)
-            claim = json.loads(entry.value.decode())
-        except Exception:
-            # Couldn't read the existing claim to check its age -- fail open
-            # toward re-execution rather than silently dropping a packet
-            # forever on a transient KV read error.
-            return True
+            pass  # key already exists -- someone holds (or held) this claim
+
+        # The create() above failing PROVES a claim already exists -- not
+        # being able to read it doesn't mean it's gone. Found live
+        # 2026-08-17: this used to fail open (return True, "safe to
+        # execute") on any transient KV read error, which is backwards and
+        # reopened the exact duplicate-execution bug this fence exists to
+        # close. It disproportionately hit the assess capability -- by far
+        # the highest-throughput agent, so the most likely to hit a
+        # transient JetStream read blip under real concurrent load. Retry
+        # a few times for an ordinary blip; if it still can't be read,
+        # fail CLOSED (assume live, reject) rather than open (assume
+        # abandoned, re-execute) -- occasionally dropping a packet on a
+        # persistent KV outage is a far smaller cost than silently
+        # re-running real side effects (deploys, skill writes) a second time.
+        claim = None
+        entry = None
+        for attempt in range(3):
+            try:
+                entry = await kv.get(packet_id)
+                claim = json.loads(entry.value.decode())
+                break
+            except Exception:
+                if attempt == 2:
+                    log.error("[%s] could not read existing claim for %s after retries -- "
+                              "failing closed (treating as still live)", self.agent_id, packet_id[:8])
+                    return False
+                await asyncio.sleep(0.2)
+
         if now - claim.get("ts", 0) < INFLIGHT_STALE_SECONDS:
             return False
         try:

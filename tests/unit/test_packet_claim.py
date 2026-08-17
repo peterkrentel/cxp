@@ -10,6 +10,7 @@ always possible by design."""
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock
 
 from src.agent_shell import KV_INFLIGHT, INFLIGHT_STALE_SECONDS
 
@@ -56,3 +57,47 @@ async def test_a_still_running_claim_is_not_treated_as_stale(agent, fake_kv):
     # window (e.g. LLM_TOTAL_TIMEOUT can run up to 900s) -- must still be
     # rejected, not mistaken for an abandoned claim.
     assert await agent._claim_packet(PACKET_ID) is False
+
+
+async def test_unreadable_existing_claim_fails_closed_not_open(agent, fake_kv, monkeypatch):
+    """Regression test for a real bug found live 2026-08-17: a claim
+    already exists (create() failed), but reading it to check staleness
+    then hits a transient error -- this used to fail OPEN (return True,
+    "safe to execute"), which is backwards, since the failed create()
+    already proved someone else holds this claim. Disproportionately hit
+    the assess capability (highest-throughput agent, most likely to see a
+    transient JetStream read blip under load), producing real duplicate
+    "done" completions despite the fence supposedly being in place."""
+    agent._kv_cache[KV_INFLIGHT] = fake_kv
+    assert await agent._claim_packet(PACKET_ID) is True  # someone else holds it
+
+    async def always_fails(key):
+        raise ConnectionError("simulated transient JetStream read blip")
+
+    monkeypatch.setattr(fake_kv, "get", always_fails)
+    monkeypatch.setattr("src.agent_shell.asyncio.sleep", AsyncMock())
+
+    assert await agent._claim_packet(PACKET_ID) is False
+
+
+async def test_transient_read_error_recovers_on_retry(agent, fake_kv, monkeypatch):
+    agent._kv_cache[KV_INFLIGHT] = fake_kv
+    assert await agent._claim_packet(PACKET_ID) is True
+
+    real_get = fake_kv.get
+    calls = {"n": 0}
+
+    async def flaky_get(key):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise ConnectionError("simulated transient blip")
+        return await real_get(key)
+
+    monkeypatch.setattr(fake_kv, "get", flaky_get)
+    monkeypatch.setattr("src.agent_shell.asyncio.sleep", AsyncMock())
+
+    # The existing claim is still live (not stale), so once the read
+    # actually succeeds on retry, this must correctly reject -- the retry
+    # exists to rescue a transient blip, not to change the outcome.
+    assert await agent._claim_packet(PACKET_ID) is False
+    assert calls["n"] >= 2

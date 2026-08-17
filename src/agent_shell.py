@@ -288,95 +288,112 @@ class AgentShell(ABC):
         if self._nc:
             await self._nc.drain()
 
+    async def _handle_message(self, msg) -> None:
+        """Process one delivered packet message end-to-end. Broken out of
+        run() as its own method (rather than a closure) specifically so it
+        can be unit-tested with a fake `msg` (just needs async ack()/
+        in_progress()) and mocked _execute(), without a live NATS server.
+
+        Every exit path acks — redelivery here exists only to rescue a
+        packet whose delivery attempt never finished (pod died mid-handling
+        before this line ran), not to retry business-logic failures. Those
+        are already the halt gate's job, and a failed packet redelivering
+        forever would just spam the same error into the halt reason.
+        """
+        try:
+            packet = CXPPacket.model_validate_json(msg.data)
+        except Exception as exc:
+            log.warning("[%s] bad packet: %s", self.agent_id, exc)
+            await msg.ack()
+            return
+
+        if packet.status != PacketStatus.PENDING:
+            await msg.ack()
+            return
+
+        halt = await self.is_halted()
+        if halt and not self.BYPASS_HALT_CHECK:
+            log.warning("[%s] swarm halted (%s) — dropping packet %s",
+                        self.agent_id, halt.get("reason"), packet.id[:8])
+            await msg.ack()
+            return
+
+        if not await self._claim_packet(packet.id):
+            log.warning("[%s] packet %s already claimed by another delivery — "
+                        "acking as a duplicate redelivery, not re-executing",
+                        self.agent_id, packet.id[:8])
+            await msg.ack()
+            return
+
+        packet.claim(self.agent_id)
+        await self._emit_status("working", packet)
+
+        # Tell JetStream "still alive" every 90s (well under ack_wait's
+        # 300s) for as long as _execute() genuinely keeps running --
+        # decouples "how long can a legitimate LLM call take" from
+        # "when does JetStream assume this pod died and redelivers to
+        # someone else" entirely. A real generation can now take as
+        # long as it actually needs; only a pod that's genuinely
+        # crashed (heartbeats stop with it) still triggers redelivery,
+        # exactly the resilience ack_wait was built for.
+        async def _heartbeat() -> None:
+            while True:
+                await asyncio.sleep(90)
+                try:
+                    await msg.in_progress()
+                    log.info("[%s] heartbeat sent for %s", self.agent_id, packet.id[:8])
+                except Exception as exc:
+                    log.error("[%s] heartbeat FAILED for %s: %r", self.agent_id, packet.id[:8], exc)
+
+        heartbeat_task = asyncio.create_task(_heartbeat())
+        try:
+            await self._think(f"▶ TASK: {packet.payload.goal}")
+            await self._think(f"  cap={packet.capability}  id={packet.id[:8]}")
+            output = await self._execute(packet)
+            packet.complete(self.agent_id, output)
+            self._memory.record_success(self.agent_id, packet.capability)
+            await self._memory.save()
+            await self._think(f"✓ DONE: {packet.id[:8]} — {len(output)} chars")
+            log.info("[%s] ✓ %s", self.agent_id, packet.id[:8])
+        except Exception as exc:
+            # str(exc) is empty for some exception types (e.g. httpx's
+            # timeout errors) — fall back to repr() so the halt reason
+            # and logs always name at least the exception class.
+            detail = str(exc) or repr(exc)
+            packet.fail(self.agent_id, detail)
+            self._memory.record_failure(self.agent_id, packet.capability)
+            await self._memory.save()
+            reason = f"{self.agent_id} failed on {packet.capability} ({packet.id[:8]}): {detail}"
+            await self.set_halt(reason, task_id=packet.task_id)
+            await self._think(f"✗ ERROR: {packet.id[:8]} — {detail} — swarm halted, awaiting human")
+            log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], detail, exc_info=True)
+            await self._emit_diagnose_request(packet, detail)
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+        # The claim must stay live through publish+ack, not just through
+        # _execute() -- releasing it here (as an earlier version of this
+        # fix did) reopens the exact race the fence exists to close: the
+        # heartbeat already stopped once _execute() returns, so if
+        # _publish/_emit_status/ack takes long enough to run past
+        # whatever ack_wait budget is left, JetStream can redeliver in
+        # that gap. With the claim already released, the redelivered
+        # copy looks brand new and reruns the whole task, producing a
+        # second real "done" result. Confirmed live 2026-08-17: 4 planner
+        # packets each completed twice, ~10-15 minutes apart, on an agent
+        # with a single replica -- not two replicas racing, just this
+        # exact post-execute window.
+        await self._publish(SUBJECT_RESULTS, packet)
+        await self._emit_status("idle")
+        await msg.ack()
+        await self._release_packet_claim(packet.id)
+
     async def run(self) -> None:
         await self.connect()
-
-        async def handle(msg):
-            # Every exit path below acks — redelivery here exists only to
-            # rescue a packet whose delivery attempt never finished (pod
-            # died mid-handling before this line ran), not to retry
-            # business-logic failures. Those are already the halt gate's
-            # job, and a failed packet redelivering forever would just spam
-            # the same error into the halt reason.
-            try:
-                packet = CXPPacket.model_validate_json(msg.data)
-            except Exception as exc:
-                log.warning("[%s] bad packet: %s", self.agent_id, exc)
-                await msg.ack()
-                return
-
-            if packet.status != PacketStatus.PENDING:
-                await msg.ack()
-                return
-
-            halt = await self.is_halted()
-            if halt and not self.BYPASS_HALT_CHECK:
-                log.warning("[%s] swarm halted (%s) — dropping packet %s",
-                            self.agent_id, halt.get("reason"), packet.id[:8])
-                await msg.ack()
-                return
-
-            if not await self._claim_packet(packet.id):
-                log.warning("[%s] packet %s already claimed by another delivery — "
-                            "acking as a duplicate redelivery, not re-executing",
-                            self.agent_id, packet.id[:8])
-                await msg.ack()
-                return
-
-            packet.claim(self.agent_id)
-            await self._emit_status("working", packet)
-
-            # Tell JetStream "still alive" every 90s (well under ack_wait's
-            # 300s) for as long as _execute() genuinely keeps running --
-            # decouples "how long can a legitimate LLM call take" from
-            # "when does JetStream assume this pod died and redelivers to
-            # someone else" entirely. A real generation can now take as
-            # long as it actually needs; only a pod that's genuinely
-            # crashed (heartbeats stop with it) still triggers redelivery,
-            # exactly the resilience ack_wait was built for.
-            async def _heartbeat() -> None:
-                while True:
-                    await asyncio.sleep(90)
-                    try:
-                        await msg.in_progress()
-                        log.info("[%s] heartbeat sent for %s", self.agent_id, packet.id[:8])
-                    except Exception as exc:
-                        log.error("[%s] heartbeat FAILED for %s: %r", self.agent_id, packet.id[:8], exc)
-
-            heartbeat_task = asyncio.create_task(_heartbeat())
-            try:
-                await self._think(f"▶ TASK: {packet.payload.goal}")
-                await self._think(f"  cap={packet.capability}  id={packet.id[:8]}")
-                output = await self._execute(packet)
-                packet.complete(self.agent_id, output)
-                self._memory.record_success(self.agent_id, packet.capability)
-                await self._memory.save()
-                await self._think(f"✓ DONE: {packet.id[:8]} — {len(output)} chars")
-                log.info("[%s] ✓ %s", self.agent_id, packet.id[:8])
-            except Exception as exc:
-                # str(exc) is empty for some exception types (e.g. httpx's
-                # timeout errors) — fall back to repr() so the halt reason
-                # and logs always name at least the exception class.
-                detail = str(exc) or repr(exc)
-                packet.fail(self.agent_id, detail)
-                self._memory.record_failure(self.agent_id, packet.capability)
-                await self._memory.save()
-                reason = f"{self.agent_id} failed on {packet.capability} ({packet.id[:8]}): {detail}"
-                await self.set_halt(reason, task_id=packet.task_id)
-                await self._think(f"✗ ERROR: {packet.id[:8]} — {detail} — swarm halted, awaiting human")
-                log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], detail, exc_info=True)
-                await self._emit_diagnose_request(packet, detail)
-            finally:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
-                await self._release_packet_claim(packet.id)
-
-            await self._publish(SUBJECT_RESULTS, packet)
-            await self._emit_status("idle")
-            await msg.ack()
 
         # Each capability gets its own capability-routed subject with a durable
         # JetStream consumer — `durable` + `queue` gives the same "replicas
@@ -394,7 +411,7 @@ class AgentShell(ABC):
             # processed twice. Default is 30s; LLM calls under contention
             # have taken 3-4 minutes, so this needs real headroom.
             config = api.ConsumerConfig(ack_wait=300)
-            await js.subscribe(subject, durable=durable, queue=durable, cb=handle,
+            await js.subscribe(subject, durable=durable, queue=durable, cb=self._handle_message,
                                 manual_ack=True, config=config)
             log.info("[%s] listening on %s (durable=%s, ack_wait=300s)", self.agent_id, subject, durable)
 

@@ -395,6 +395,18 @@ That's the actual gap this plan should account for going forward: two distinct r
 
 Explicitly not scoped further or approved for execution — captured here so Task 3's design doesn't get re-derived without this context once this plan is picked back up.
 
+## Addendum (2026-08-17): Tier 1 rolled back to awareness-only; a real root-cause fix landed instead
+
+The "Tier 1" framing above (diagnostician auto-clears timeouts) was rolled back the next day, deliberately, after more live use surfaced the same class of timeout recurring multiple times in one evening. The user's own reasoning: *"once I see the pattern then you should too... but I'm not sure resolution [is right]... it's a tricky question to determine what to do unilaterally... let's leave it as awareness vs. rushing into a fix."* `diagnostician` now always investigates and always attaches a diagnosis — including explicitly flagging when the same failure class has recurred multiple times in the last 15 minutes — but it **never clears a halt itself**, timeout-class or not. Every halt waits for a human, full stop.
+
+What actually reduces *how often* these timeouts happen is a separate, real fix, not a resolution tier at all: `acquire_ollama_slot()`/`release_ollama_slot()` in `agent_shell.py` — every agent now waits for a *confirmed* free concurrency slot (a JetStream KV semaphore matching Ollama's real `OLLAMA_NUM_PARALLEL` capacity) before starting an LLM call, instead of racing for a slot and timing out when it loses. Root-caused live: three agents were found submitting to the same 2-slot Ollama instance within a 3-second window via a timestamp cross-reference against the thinking-stream log — not a guess, an actual reconstructed causal chain.
+
+**Revised tier framing, replacing the one above:**
+- **A real fix (built 2026-08-17):** the Ollama concurrency semaphore — reduces how often a timeout-class halt happens at all, by preventing the specific queue-collision that caused every one observed. Not a "resolution tier" — it prevents the failure, doesn't clean up after it.
+- **Diagnostician (rolled back to, 2026-08-17):** awareness only. Investigates every halt, recognizes recurrence, writes a real diagnosis — never acts unilaterally. The remaining, still-open question from the original Tier 1/Tier 2 framing — a coding-agent tier for actual defects — is unchanged and still not built.
+
+**New idea surfaced in the same conversation, not built:** diagnostician's own reasoning step is off the swarm's real-time hot path (nothing is waiting on it synchronously the way planner/executor are) — a reasonable place to call an external, more capable model (Gemini Flash Lite, or a Claude API call) instead of the local quantized model, for a genuinely more trustworthy diagnosis, without touching the main swarm's local-only constraint at all. Same shape as the earlier-floated idea of using a bigger hosted model for the CI gate. Not scoped further; captured here so it isn't lost.
+
 ## Open Questions (unresolved by this plan — decide before Task 3 execution)
 
 - **Trigger cadence for `self-learning.yml`.** Drafted as `workflow_dispatch`-only (manual) above, deliberately, since the user has an explicit standing rule against ad-hoc *live*-cluster test runs — but that rule was about the live loop specifically, and whether it should also bound how often the *ephemeral* loop runs is an open call for the user, not assumed here.

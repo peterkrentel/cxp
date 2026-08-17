@@ -1,17 +1,16 @@
-"""Diagnostician agent — investigates a swarm halt and either auto-resolves
-it (when the failure is a plain network/LLM timeout) or attaches a
-human-readable diagnosis to the halt banner (when it's anything else).
+"""Diagnostician agent — investigates every swarm halt and attaches a
+human-readable diagnosis to the halt record. It never clears a halt itself.
 
-Deliberately conservative on WHAT auto-resolves (only a known timeout-class
-exception name — bad JSON, bad code, any other exception stays halted for a
-human), but deliberately does NOT gate that decision behind an LLM call: an
-LLM-authored "is this really transient?" judgment is itself just another
-call to the same Ollama instance that may currently be the overloaded thing
-being diagnosed. For the timeout case, resource signals (kubectl top,
-Ollama's own /api/ps) are gathered as supporting evidence and logged, but
-the resolve decision is made from the exception type alone. The LLM is only
-invoked for the harder, non-timeout case, where a written diagnosis is
-actually worth producing for a human to read.
+Earlier version of this agent auto-cleared a narrow class of plain
+network/LLM timeouts without a human. Rolled back deliberately (2026-08-17):
+the user wanted awareness, not unilateral resolution -- "once I see the
+pattern then you should too... but I'm not sure resolution [is right]."
+Diagnostician still does the hard part (gather evidence, recognize a
+recurring pattern, write a real diagnosis) but leaves every halt, including
+a well-understood recurring one, for a human to actually clear. The real
+fix for the specific queue-collision timeouts found live tonight is
+`acquire_ollama_slot()`/`release_ollama_slot()` in agent_shell.py -- an
+actual root-cause fix, not an auto-resolve.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 from ..agent_shell import AgentShell, OLLAMA_URL, strip_code_fence
 from ..packet import CXPPacket
@@ -30,13 +30,20 @@ OLLAMA_SMALL_URL = os.environ.get("OLLAMA_SMALL_URL", OLLAMA_URL)
 
 # Exception class names that indicate transient network/LLM slowness rather
 # than a code or logic defect — matched against the raw exception detail
-# string already captured by AgentShell's halt reason.
+# string already captured by AgentShell's halt reason. Still used to decide
+# whether it's safe to skip the LLM call (see BASE_SYSTEM docstring below),
+# not to decide whether to auto-clear anymore.
 TRANSIENT_EXCEPTIONS = ("ReadTimeout", "ConnectTimeout", "ConnectError", "PoolTimeout", "TimeoutError")
 
+# Recognized and surfaced in the diagnosis text, not acted on unilaterally --
+# "this keeps happening" is exactly the kind of pattern a human should see,
+# not one that gets quietly absorbed forever.
+RECURRENCE_WINDOW_SECONDS = 900  # 15 minutes
+KV_RECURRENCE_KEY = "diagnostician_timeout_history"
+
 BASE_SYSTEM = """You are a systems diagnostician for a small self-improving AI agent swarm
-running in Kubernetes. You are given the reason the swarm just halted (already
-known to NOT be a plain network/LLM timeout — those are handled separately),
-recent verification score history, and live pod resource usage. Produce:
+running in Kubernetes. You are given the reason the swarm just halted, recent
+verification score history, and live pod resource usage. Produce:
 
 1. A one-paragraph diagnosis of the most likely root cause.
 2. A concrete suggested next action for the human who will read this.
@@ -72,20 +79,33 @@ class DiagnosticianAgent(AgentShell):
         ollama_state = await self._fetch_ollama_state()
 
         if is_timeout_class:
-            # No LLM call in this path on purpose — see module docstring.
-            # The exception type alone is the resolve signal; resource
-            # metrics are gathered as supporting evidence for the record,
-            # not as a gate.
+            # No LLM call in this path on purpose: an LLM-authored "is this
+            # really transient?" judgment is itself just another call to the
+            # same Ollama instance that may currently be the overloaded thing
+            # being diagnosed. The diagnosis here is built from hard evidence
+            # (pod metrics, Ollama state, recurrence count) instead.
+            recent_count = await self._recent_timeout_count()
+            recurrence_note = (
+                f" This is the {recent_count + 1}th timeout-class halt in the last "
+                f"{RECURRENCE_WINDOW_SECONDS // 60} minutes — a recurring pattern, not a one-off."
+                if recent_count > 0 else ""
+            )
             diagnosis = (
-                f"Timeout-class failure ({exc_detail}) from {halt.get('agent')}. "
+                f"Timeout-class failure ({exc_detail}) from {halt.get('agent')}.{recurrence_note} "
                 f"Pod CPU/memory at halt time:\n{pod_metrics}\n"
                 f"Ollama instance state:\n{ollama_state}"
             )
-            await self._think(f"🩺 timeout-class halt — auto-resuming: {exc_detail}")
-            self._memory.add_semantic(f"Auto-resolved halt ({halt.get('reason')}): {diagnosis[:300]}")
-            await self.clear_halt()
+            suggested_action = (
+                "Recurring resource contention — consider the quantization/model-swap or GPU-serving "
+                "roadmap items rather than just resuming each time."
+                if recent_count >= 2
+                else "Likely transient LLM/network slowness. Safe to Resume once ready."
+            )
+            await self._think(f"🩺 diagnosis: timeout-class halt{recurrence_note} — awaiting human")
+            await self._record_timeout()
+            await self._attach_diagnosis({"diagnosis": diagnosis, "suggested_action": suggested_action})
             await self._memory.save()
-            return json.dumps({"diagnosis": diagnosis, "likely_transient": True, "auto_resolved": True})
+            return json.dumps({"diagnosis": diagnosis, "suggested_action": suggested_action})
 
         # Non-timeout failure (bad JSON, bad code, anything else): worth an
         # actual LLM-authored diagnosis for a human to read. Ollama being
@@ -105,7 +125,31 @@ class DiagnosticianAgent(AgentShell):
         await self._think(f"🩺 diagnosis: {result.get('diagnosis', '')[:200]} — awaiting human")
         await self._attach_diagnosis(result)
         await self._memory.save()
-        return json.dumps({**result, "auto_resolved": False})
+        return json.dumps(result)
+
+    async def _recent_timeout_count(self) -> int:
+        """How many timeout-class halts have happened in the last
+        RECURRENCE_WINDOW_SECONDS -- surfaced in the diagnosis text, never
+        used to take an action on its own."""
+        kv = await self._kv("cxp-state")
+        try:
+            entry = await kv.get(KV_RECURRENCE_KEY)
+            history = json.loads(entry.value.decode())
+        except Exception:
+            history = []
+        now = time.time()
+        return len([ts for ts in history if now - ts < RECURRENCE_WINDOW_SECONDS])
+
+    async def _record_timeout(self) -> None:
+        kv = await self._kv("cxp-state")
+        now = time.time()
+        try:
+            entry = await kv.get(KV_RECURRENCE_KEY)
+            history = json.loads(entry.value.decode())
+        except Exception:
+            history = []
+        history = [ts for ts in history if now - ts < RECURRENCE_WINDOW_SECONDS] + [now]
+        await kv.put(KV_RECURRENCE_KEY, json.dumps(history).encode())
 
     async def _diagnose(self, prompt: str) -> dict:
         """Best-effort LLM diagnosis for the non-timeout case. If this call

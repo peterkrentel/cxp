@@ -1,6 +1,6 @@
 # CXP Architecture
 
-Diagrams reflect the system as it actually runs today (post the 2026-08-16 fixes — shared skill propagation via NATS KV, the swarm-wide halt gate, JetStream-backed packet durability). Where something changed, it's called out, since the "before" behavior is useful context for why the current design looks the way it does.
+Diagrams reflect the system as it actually runs today (post the 2026-08-16 fixes — shared skill propagation via NATS KV, the swarm-wide halt gate, JetStream-backed packet durability, and a second 2026-08-16 pass adding the `diagnostician` agent, three planner hardening fixes found live, and a total-duration cap on LLM calls). Where something changed, it's called out, since the "before" behavior is useful context for why the current design looks the way it does.
 
 ## Why this stack
 
@@ -29,7 +29,7 @@ graph TB
         subgraph nats["NATS + JetStream"]
             Stream[["stream CXP_PACKETS<br/>subjects cxp.cap.*<br/>durable consumers, manual ack"]]
             KVSkills[("KV cxp-skills")]
-            KVState[("KV cxp-state<br/>halt flag")]
+            KVState[("KV cxp-state<br/>halt flag + Ollama slot claims")]
         end
 
         Planner[planner ×1]
@@ -38,6 +38,7 @@ graph TB
         Assessor[assessor ×1]
         Reflect[reflect ×1]
         Deployer[deployer ×1<br/>+ kubectl binary]
+        Diagnostician[diagnostician ×1<br/>+ kubectl binary, read-only<br/>BYPASS_HALT_CHECK]
 
         Ollama[[Ollama<br/>qwen2.5:1.5b]]
         OllamaSmall[[Ollama-small<br/>qwen2.5:0.5b]]
@@ -48,37 +49,46 @@ graph TB
         Applied[Deployments/Services/Pods<br/>applied by deployer only]
     end
 
+    Metrics[["metrics-server<br/>kube-system"]]
+
     H -->|POST /api/submit| Web
     Cron -->|test suite, one at a time,<br/>waits for each to settle| Web
     Web -. checks before accepting .-> KVState
     Web -->|publish| Stream
-    Stream --> Planner & Executor & Verifier & Assessor & Reflect & Deployer
+    Stream --> Planner & Executor & Verifier & Assessor & Reflect & Deployer & Diagnostician
 
     Planner --> Ollama
     Executor --> Ollama
     Verifier --> Ollama
     Reflect --> Ollama
     Assessor --> OllamaSmall
+    Diagnostician -.->|non-timeout halts only| Ollama
+    Diagnostician -->|/api/ps, both instances| OllamaSmall
 
     Planner -->|emits code packets| Stream
     Executor -->|emits verify packet| Stream
     Verifier -->|emits assess + reflect + deploy packets| Stream
+    Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|on any unhandled error| Diagnostician
 
     Reflect -->|writes new revision| KVSkills
     Planner & Executor & Verifier -. reads fresh, per task .-> KVSkills
 
     Deployer -->|kubectl apply, score ≥ 0.85 only| Applied
+    Diagnostician -->|kubectl top pods, read-only| Metrics
+    Diagnostician -.->|attach diagnosis only —<br/>never clears the halt itself| KVState
 
-    Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|reputation, always| Memory
+    Planner & Executor & Verifier & Assessor & Reflect & Deployer & Diagnostician -->|reputation, always| Memory
     Planner & Executor & Verifier & Assessor & Reflect & Deployer -. checked before every packet .-> KVState
     Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|set on unhandled error| KVState
 ```
 
 **Notes:**
-- `deployer` is the only pod with a `kubectl` binary (downloaded at init time) and a ServiceAccount — via a Role/RoleBinding — scoped only to `cxp-sandbox`. It cannot touch the `cxp` namespace the agents run in.
+- `deployer` and `diagnostician` are the only two pods with a `kubectl` binary (downloaded at init time), each with its own ServiceAccount scoped by a separate Role/RoleBinding: `deployer` can create/update/delete in `cxp-sandbox` only; `diagnostician` can only `get`/`list` pods and pod metrics in the `cxp` namespace — read-only, nothing it can create, change, or delete. Neither can touch what the other is scoped to.
+- **`diagnostician` is exempt from the halt-drops-every-packet rule** (`BYPASS_HALT_CHECK = True` on its `AgentShell` subclass) — its entire job is to investigate *while* the swarm is halted, so it can't be subject to the same rule that stops every other agent from claiming work during a halt.
 - The memory PVC is `ReadWriteOnce`. That's only safe because the kind cluster is single-node; a real multi-node cluster would need `ReadWriteMany` or the KV-store pattern used for skills instead.
 - **Two Ollama instances, split by model, not one shared instance.** `assessor` is the only agent on `qwen2.5:0.5b`, so it gets its own dedicated instance (`Ollama-small`, ~1.5 CPU/1.5Gi limit) separate from the one serving everyone else's `qwen2.5:1.5b` (~3.5 CPU/3Gi limit, shrunk from the single instance's earlier 5 CPU/4Gi so total demand stays about the same). Why: `verifier` fans out to `assessor` and `reflect` *simultaneously* on every single pass — two different models, same instant — and that pair kept colliding on one shared CPU allocation even after the single-instance resource limits were added. Two instances means that concurrent pair lands on two separate processes instead of queueing behind each other. Not "one Ollama per agent" (ruled out — six agents' worth of loaded models would need ~9GB against a 7.7GB-total node); just splitting by which model is actually in play.
 - "reputation, always" in the diagram is a simplification: every agent writes reputation on every packet (`record_success`/`record_failure`), but only `verifier` writes the structured `episodic` entries (`{capability, skill_revision, score, goal}`) used for regression detection, and only `reflect`/`assessor` write `semantic` facts (free-text notes). Same file (`memory.json`), three different record types, written by different agents.
+- **A real concurrency limit was still routing around resource limits.** Even with two Ollama instances and CPU limits, agents were calling `self.llm()` freely — no coordination across pods about how many were hitting the same instance at once. Ollama itself queues correctly beyond its configured `OLLAMA_NUM_PARALLEL`, but the *client's* per-chunk timeout couldn't tell "queued, waiting its turn" from "actually stuck." `acquire_ollama_slot()`/`release_ollama_slot()` (`agent_shell.py`, backed by a claims list in `KV cxp-state`) make every agent block on a *confirmed* free slot — checked by short polling against real claims, not a fixed timer — before ever starting the timed HTTP call. A claim older than `OLLAMA_SLOT_STALE_SECONDS` (280s) is pruned automatically, so a pod that gets killed mid-request doesn't leak that slot forever.
 
 ## 2. One task, start to finish
 
@@ -138,16 +148,28 @@ flowchart TD
     Try -->|yes| Success[packet.complete<br/>record_success<br/>publish result]
     Try -->|no, exception| Fail["packet.fail(detail)<br/>detail = str(exc) or repr(exc)<br/>— never blank"]
     Fail --> SetHalt["set_halt(reason, agent, task_id)<br/>→ KV cxp-state / halt"]
+    Fail --> EmitDiag["emit diagnose packet<br/>→ cxp.cap.diagnose"]
     SetHalt --> Banner[web dashboard shows<br/>⛔ SWARM HALTED banner]
     Banner --> Block["POST /api/submit → 409<br/>new work rejected"]
-    Banner --> Drop["every agent checks is_halted()<br/>before claiming the next packet<br/>→ drops it if halted"]
-    Banner --> Human[Human reads the reason]
+    Banner --> Drop["every agent except diagnostician<br/>checks is_halted() before claiming<br/>the next packet → drops it if halted"]
+
+    EmitDiag --> Diag[diagnostician claims it —<br/>BYPASS_HALT_CHECK, runs anyway]
+    Diag --> IsTimeout{exception is a plain<br/>network/LLM timeout?}
+    IsTimeout -->|yes| NoLLM["skip the LLM call entirely —<br/>it would itself be vulnerable to<br/>the overload being diagnosed"]
+    NoLLM --> Metrics["kubectl top pods + Ollama /api/ps<br/>+ how many times this recurred<br/>in the last 15 min"]
+    Metrics --> Attach1["attach diagnosis to the<br/>still-active halt record"]
+
+    IsTimeout -->|no —<br/>bad JSON, bad code, anything else| CallLLM[LLM-authored diagnosis:<br/>root cause + suggested action]
+    CallLLM --> Attach2["attach diagnosis to the<br/>still-active halt record"]
+
+    Attach1 --> Human[Human reads reason + diagnosis]
+    Attach2 --> Human
     Human --> Resume["Resume ▶ → POST /api/halt/clear"]
     Resume --> Cleared[("KV cxp-state: halted=false")]
     Cleared --> Start
 ```
 
-Before this existed, every failure was logged and silently forgotten — the swarm just kept consuming new work regardless of whether the last thing it did actually worked.
+Before the halt gate existed at all, every failure was logged and silently forgotten — the swarm just kept consuming new work regardless of whether the last thing it did actually worked. `diagnostician` (added 2026-08-16) investigates every halt and always attaches a real diagnosis — including whether the same failure class has recurred multiple times in the last 15 minutes — but **it never clears a halt itself**, timeout-class or not. An earlier version of this agent did auto-clear plain timeouts without a human; rolled back the same day, deliberately: even a well-understood, frequently-recurring failure could be an early sign of something worse, and that call belongs to a human, not the swarm. `diagnostician` narrows the *investigation* work a human has to do — it doesn't remove the human from the loop.
 
 ## 4. Packet durability
 
@@ -163,6 +185,8 @@ flowchart LR
 Before this, publish was fire-and-forget core NATS pub/sub: a packet published while no replica happened to be subscribed (mid-rollout, restart) was simply gone, with no record it ever existed. Redelivery here is deliberately narrow — it rescues a packet whose delivery attempt never *finished*, not a packet whose processing *failed*. Failures are the halt gate's job; acking on every exit path (including halted-drop and bad-packet paths) prevents a genuinely-failed packet from redelivering forever and spamming the same error.
 
 **`ack_wait` has to exceed the slowest legitimate LLM call, or redelivery causes duplicate processing instead of preventing lost work.** Consumers are configured with `ack_wait=300s` — the default (30s) is shorter than LLM calls have taken under real contention (observed 3-4 minutes), so JetStream was redelivering a message to another replica *while the first was still slowly processing it*, not lost but processed twice. Separately: recreating an existing durable consumer (e.g. to change its config) defaults to `deliver_policy=all`, replaying the *entire* stream history from the beginning — this caused a one-time burst of stale redeliveries the first time these consumers were recreated to apply the `ack_wait` fix. `deliver_policy=new` avoids that on any future consumer change.
+
+**`ack_wait` alone doesn't bound a hung LLM call — it bounds how long JetStream waits before assuming a delivery attempt died.** Found live (2026-08-16): `self.llm()`'s httpx timeout (`read=60.0`) is a *per-chunk* timeout — it only fires if literally no data arrives for 60s. A response trickling back even one token every ~59s never trips it and can hang indefinitely, well past `ack_wait`, with the message never acked *and* never redelivered (the original delivery attempt is still technically "in progress," just stuck). `LLM_TOTAL_TIMEOUT = 240.0` now bounds the whole call regardless of how the time gets spent, kept below `ack_wait` (300s) so a genuine hang fails and triggers the halt gate before JetStream's own redelivery would ever kick in. Found live under sustained real load (2026-08-17): even 240s isn't always enough if a request is queued behind enough others — `acquire_ollama_slot()`/`release_ollama_slot()` (a JetStream KV semaphore matching Ollama's real `OLLAMA_NUM_PARALLEL` capacity) makes agents wait for a *confirmed* free slot before ever starting the timed HTTP call, instead of a request sitting queued while its clock runs out underneath it.
 
 ## Is this actually a protocol?
 

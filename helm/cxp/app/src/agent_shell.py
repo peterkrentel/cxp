@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
@@ -28,8 +30,18 @@ SUBJECT_RESULTS   = "cxp.results"    # completed / failed packets
 SUBJECT_DASHBOARD = "cxp.dashboard"  # agent status events
 SUBJECT_THINKING  = "cxp.thinking"   # LLM stream + agent reasoning
 
-KV_SKILLS = "cxp-skills"  # bucket: skill file text, shared across all replicas
-KV_STATE  = "cxp-state"   # bucket: swarm-wide control state (e.g. halt flag)
+KV_SKILLS = "cxp-skills"        # bucket: skill file text, shared across all replicas
+KV_STATE  = "cxp-state"         # bucket: swarm-wide control state (e.g. halt flag)
+KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a request
+                                      # actually in flight right now, cross-pod
+
+# A slot claim older than this is treated as abandoned (its holder crashed or
+# got killed without releasing) and gets pruned on the next acquire attempt,
+# rather than permanently shrinking that instance's real capacity. Set above
+# LLM_TOTAL_TIMEOUT (240s, in llm() below) so a legitimately-still-running
+# call is never mistaken for an abandoned one.
+OLLAMA_SLOT_STALE_SECONDS = 280
+OLLAMA_SLOT_POLL_SECONDS = 1.0
 
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
 # published while no replica happens to be subscribed (mid-rollout, pod
@@ -161,6 +173,55 @@ class AgentShell(ABC):
         log.error("[%s] validation failure (%s): %s", self.agent_id, context, detail)
         self._memory.add_semantic(f"[{self.agent_id}] {context}: {detail[:300]}")
         await self._memory.save()
+
+    @staticmethod
+    def _ollama_slot_key(url: str) -> str:
+        return url.replace("http://", "").replace("https://", "").replace(":", "_").replace("/", "_")
+
+    async def acquire_ollama_slot(self, url: str, max_slots: int) -> str:
+        """Block until a slot is actually free on this Ollama instance,
+        checked against real claims from every agent pod sharing it --
+        not a fixed timer guessing how long a queue wait might take.
+        Returns a claim id; pass it to release_ollama_slot when done."""
+        key = self._ollama_slot_key(url)
+        claim_id = uuid.uuid4().hex
+        kv = await self._kv(KV_OLLAMA_SLOTS)
+        while True:
+            now = time.time()
+            try:
+                entry = await kv.get(key)
+                claims = json.loads(entry.value.decode())
+                revision = entry.revision
+            except Exception:
+                claims, revision = [], None
+            # Prune claims held far longer than any real generation could
+            # take -- protects against a crashed/killed holder leaking a
+            # slot forever instead of just this one request waiting on it.
+            live = [c for c in claims if now - c["ts"] < OLLAMA_SLOT_STALE_SECONDS]
+            if len(live) < max_slots:
+                new_claims = live + [{"id": claim_id, "ts": now}]
+                try:
+                    if revision is not None:
+                        await kv.update(key, json.dumps(new_claims).encode(), last=revision)
+                    else:
+                        await kv.create(key, json.dumps(new_claims).encode())
+                    return claim_id
+                except Exception:
+                    pass  # lost the race to another claimant -- retry immediately
+            await asyncio.sleep(OLLAMA_SLOT_POLL_SECONDS)
+
+    async def release_ollama_slot(self, url: str, claim_id: str) -> None:
+        key = self._ollama_slot_key(url)
+        kv = await self._kv(KV_OLLAMA_SLOTS)
+        for _ in range(5):  # bounded CAS retry against concurrent releases, not a wait
+            try:
+                entry = await kv.get(key)
+                claims = json.loads(entry.value.decode())
+                remaining = [c for c in claims if c["id"] != claim_id]
+                await kv.update(key, json.dumps(remaining).encode(), last=entry.revision)
+                return
+            except Exception:
+                continue
 
     async def disconnect(self) -> None:
         if self._nc:
@@ -300,23 +361,25 @@ class AgentShell(ABC):
         missing model raises RuntimeError rather than silently pulling."""
         import httpx
 
-        # connect=10s, first-token=30s, between-tokens=120s
-        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
-        # read=120.0 above is a PER-CHUNK timeout — it only fires if NO data
-        # arrives for 120s. A response that trickles back even a token every
-        # ~119s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
+        # connect=10s, first-token=30s, between-tokens=60s
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+        # read=60.0 above is a PER-CHUNK timeout — it only fires if NO data
+        # arrives for 60s. A response that trickles back even a token every
+        # ~59s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
         # bounds the whole call regardless of how the time gets spent, and
         # is kept below ack_wait (300s) so this fails and halts before
         # JetStream would redeliver the same message to another attempt.
         #
-        # Was 60s. Found live (2026-08-17): main Ollama's OLLAMA_NUM_PARALLEL=2
-        # means a 3rd concurrent request queues correctly inside Ollama rather
-        # than being refused -- but the client's per-chunk timeout couldn't
-        # distinguish "queued, zero bytes yet, waiting its turn" from "stuck,"
-        # and gave up before the two ahead of it (observed 50-141s) finished.
-        # 120s gives real headroom for one realistic request ahead of it to
-        # finish, while 240s total still catches an actually-dead connection.
+        # This is deliberately NOT padded to tolerate Ollama's own queueing
+        # under OLLAMA_NUM_PARALLEL -- that's acquire_ollama_slot()'s job,
+        # below: block on real availability (a JetStream KV semaphore),
+        # not a bigger guess at how long a queue wait might take. Once a
+        # slot is actually acquired, "no token in 60s" is a real signal
+        # again, not queueing noise.
         LLM_TOTAL_TIMEOUT = 240.0
+
+        max_slots = int(os.environ.get("OLLAMA_MAX_PARALLEL", "2"))
+        claim_id = await self.acquire_ollama_slot(OLLAMA_URL, max_slots)
 
         await self._think(f"  ⟳ LLM ({len(user)} chars): {user[:120]}…")
 
@@ -343,19 +406,26 @@ class AgentShell(ABC):
                         continue
             return "".join(chunks)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
-            except asyncio.TimeoutError:
-                raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    raise RuntimeError(
-                        f"Model '{OLLAMA_MODEL}' not found in Ollama. "
-                        f"Available models must be pre-cached in PVC. "
-                        f"Auto-pull is disabled to prevent PostStartHook failures."
-                    )
-                raise
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                try:
+                    full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
+                except asyncio.TimeoutError:
+                    raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        raise RuntimeError(
+                            f"Model '{OLLAMA_MODEL}' not found in Ollama. "
+                            f"Available models must be pre-cached in PVC. "
+                            f"Auto-pull is disabled to prevent PostStartHook failures."
+                        )
+                    raise
+        finally:
+            # Released on every exit path, success or failure, so a request
+            # that errors doesn't leak its slot -- OLLAMA_SLOT_STALE_SECONDS
+            # is the backstop for a pod that gets killed outright and never
+            # reaches this finally block at all.
+            await self.release_ollama_slot(OLLAMA_URL, claim_id)
 
         await self._think(f"  ✓ response ({len(full)} chars): {full[:120]}…")
         return full

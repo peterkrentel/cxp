@@ -30,7 +30,7 @@ All agents communicate over **NATS JetStream** using **CXP packets** — typed, 
 
 **No OpenAI. No Anthropic. All local via Ollama** for every agent's own LLM calls (this codebase was built with Claude's help — the swarm's runtime model is a small local Ollama model, not Claude).
 
-If any agent hits an unhandled error, the swarm **halts swarm-wide** — new task submissions are rejected with a clear reason until a human clicks "Resume" in the web UI. It no longer just logs the failure and keeps going.
+If any agent hits an unhandled error, the swarm **halts swarm-wide** — new task submissions are rejected with a clear reason until a human clicks "Resume" in the web UI. It no longer just logs the failure and keeps going. A `diagnostician` agent investigates every halt automatically and attaches a real diagnosis (root cause + suggested action) to the halt banner — including flagging when the same failure class has recurred multiple times recently — but it never clears the halt itself. Awareness, not unilateral resolution: a deliberate call, since even a well-understood, frequently-seen failure could be an early sign of something worse, and the swarm shouldn't decide that on its own.
 
 ---
 
@@ -51,6 +51,7 @@ If any agent hits an unhandled error, the swarm **halts swarm-wide** — new tas
 - **Realistic minimum: 10-core CPU, 8GB RAM, 10GB disk.** This isn't a conservative guess — it's what this project has actually been run on. Ollama alone was observed running two loaded-model runner processes simultaneously at ~470% CPU *each* (nearly the entire node) before resource limits were added; on anything smaller, expect the same contention (timeouts, even real `500` errors from Ollama itself under load) that this project hit and fixed. There are now **two Ollama instances**, split by model rather than shared: the main one (`qwen2.5:1.5b`, serving planner/executor/verifier/reflect) capped at 3.5 CPU/3Gi, and a smaller dedicated one (`qwen2.5:0.5b`, `assessor` only) at 1.5 CPU/1.5Gi — combined, about the same total budget the single shared instance had before, just no longer colliding when `assessor` and `reflect` fire at the same instant (which happens on every single verifier pass). Tune down only if you also reduce how many agents/models are in play.
 - Current setup uses `qwen2.5:1.5b` (assessor uses the smaller `qwen2.5:0.5b`) — small models chosen to run comfortably on modest hardware, at the cost of occasionally malformed JSON output (planner is the most sensitive to this).
 - Bigger/better models: edit `helm/cxp/values.yaml` per-agent `model:` field; any Ollama-compatible model works. Check actual headroom first (`docker exec <kind-node> sh -c 'nproc; free -h'`) — a bigger model needs more of both, on top of what's already tightly budgeted here.
+- **`metrics-server` is installed on the cluster** (not part of the Helm chart — installed once via `kubectl apply` against the official manifest, patched with `--kubelet-insecure-tls` for kind's self-signed kubelet certs), so `kubectl top nodes`/`kubectl top pods` work for real-time CPU/memory — the same signal that found the original resource-starvation root cause, now available on demand instead of only via `docker exec <kind-node> sh -c uptime`.
 
 ---
 
@@ -103,9 +104,11 @@ kubectl exec -n cxp deploy/cxp-nats-box -- nats kv history cxp-skills executor
 ## Swarm halt on error
 
 Any unhandled agent exception sets a shared halt flag (`cxp-state` KV bucket, key `halt`) with the failing agent, packet, and reason. While halted:
-- Every agent stops processing new packets (checked at the top of `agent_shell.py`'s message handler)
+- Every agent stops processing new packets (checked at the top of `agent_shell.py`'s message handler) — except `diagnostician`, which is specifically exempt (`BYPASS_HALT_CHECK = True`) so it can investigate while everyone else is frozen
 - `POST /api/submit` returns `409` with the halt reason instead of queuing new work
-- The web dashboard shows a red "⛔ SWARM HALTED" banner with the reason and a **Resume** button
+- The web dashboard shows a red "⛔ SWARM HALTED" banner with the reason, and (once the diagnostician finishes) a diagnosis + suggested action, plus a **Resume** button
+
+**The `diagnostician` agent investigates every halt but never clears one itself.** For a plain network/LLM timeout, it checks `kubectl top` and Ollama's own `/api/ps` and writes a diagnosis built from that evidence — deliberately without an LLM call gating it (that call would itself be vulnerable to the same Ollama overload being diagnosed) — including flagging if the same failure class has recurred multiple times in the last 15 minutes. For anything else (malformed JSON, malformed code, any other exception), it produces an LLM-authored diagnosis instead. Either way, the halt stays active until a human clears it — awareness, not unilateral resolution, by deliberate choice (2026-08-17): even a well-understood, frequently-recurring failure could be an early sign of something worse, and that call belongs to a human, not the swarm.
 
 Clear it manually if needed:
 ```bash
@@ -149,10 +152,11 @@ CXP_WEB_API=http://localhost:8080 make test
 | assessor | `assess` | qwen2.5:0.5b | Labels artifacts with capability tags |
 | deployer | `deploy` | — (no LLM) | `kubectl apply`s YAML / runs code in `cxp-sandbox`, score ≥ 0.85 only |
 | reflect | `reflect` | qwen2.5:1.5b | Rewrites skill files on failure |
+| diagnostician | `diagnose` | qwen2.5:1.5b | Investigates every halt, attaches a diagnosis (never clears it itself) |
 | dashboard | — | — | Terminal UI (`make dashboard`) |
 | web | — | — | Browser UI at http://localhost |
 
-Only the `deployer` pod carries the `kubectl` binary (downloaded at init-container time) and a ServiceAccount scoped — via Role/RoleBinding — to the `cxp-sandbox` namespace only. It cannot touch the `cxp` namespace the agents themselves run in.
+`deployer` and `diagnostician` are the only two pods with a `kubectl` binary (downloaded at init-container time), each with its own scoped ServiceAccount — `deployer` can create/update/delete in the `cxp-sandbox` namespace only; `diagnostician` can only `get`/`list` pods and pod metrics in the `cxp` namespace, read-only, nothing it can create or change. Neither can touch anything the other is scoped to.
 
 ---
 
@@ -177,14 +181,22 @@ src/
     assessor.py          labels artifacts with AI capability tags
     deployer.py           kubectl-applies YAML / runs code artifacts, sandbox-scoped
     reflect.py            rewrites skill files via the shared KV store
+    diagnostician.py       investigates every halt, attaches a diagnosis; never clears one itself
 
 skills/                  ConfigMap-seeded starting text for each skill
   planner_v1.md
   executor_v1.md         ← live copy lives in NATS KV once reflect runs once
   verifier_v1.md
 
+scripts/
+  health-check.sh         one-shot cluster health snapshot (halt state, agent states,
+                          pod resource usage, JetStream backlog/dead-subject counts,
+                          cronjob/job status, recent Warning events) — consolidates
+                          what used to be ad-hoc kubectl/nats investigation
+
 tests/
   run_tests.py           self-improving test runner (submit → evaluate → reflect → retry)
+  check_plateau.py        tracks consecutive clean runs toward the tier-3 activation threshold
   results/               JSON result files per run (pushed to git by the CronJob)
 
 helm/cxp/
@@ -198,11 +210,28 @@ helm/cxp/
   templates/
     agents.yaml          Deployments — python:3.12-slim + init container code assembly
     deployer-rbac.yaml    ServiceAccount/Role/RoleBinding scoping deployer to cxp-sandbox
+    diagnostician-rbac.yaml  ServiceAccount/Role/RoleBinding scoping diagnostician
+                              to read-only pod/metrics access in the cxp namespace
     app-code.yaml         ConfigMaps embedding all source code (from helm/cxp/app/)
     config.yaml           PVC (helm.sh/resource-policy: keep) + skills ConfigMap
     web-service.yaml      ClusterIP service + Traefik IngressRoute
     test-runner.yaml      CronJob for hourly autonomous testing
     sandbox-namespace.yaml  cxp-sandbox namespace the deployer targets
+
+.github/workflows/
+  ci.yml                 infra-only deploy validation gate — spins up a throwaway
+                         kind cluster per PR, helm lint + install, waits for all
+                         pods Ready. Does not run the LLM test suite (that stays
+                         the in-cluster hourly CronJob's job — a small local model
+                         is inherently non-deterministic, so a PR gate that can
+                         fail for reasons unrelated to the code change would erode
+                         trust fast).
+
+docs/superpowers/plans/  dated implementation plans (superpowers:writing-plans
+                         convention) — includes the roadmap/backlog index and
+                         designs for the ephemeral self-learning loop, Oracle
+                         Cloud migration, git-pull deploy trigger, and telemetry,
+                         none of which are built yet
 
 Makefile               deploy / reset / test / submit / dashboard / logs
 kind-config.yaml       kind cluster with ports 80, 443, 4222 mapped
@@ -227,7 +256,8 @@ kind-config.yaml       kind cluster with ports 80, 443, 4222 mapped
 - **`ReadWriteOnce` memory PVC** works today only because the kind cluster is single-node. Move to ReadWriteMany (or the KV-store pattern used for skills) before running multi-node.
 - **`src`/`helm/cxp/app/` duplication is real, but `make deploy`/`make sync` handle it** — the Makefile's `sync` target copies `src/`, `main.py`, and `tests/run_tests.py` into `helm/cxp/app/` before every deploy. Only a problem if you edit the `helm/cxp/app/` copy directly, or run `helm upgrade` without going through `make deploy` first.
 - **Reflect only maintains the `executor` skill** — planner/verifier skill files exist but nothing currently rewrites them.
-- **Small local models** (`qwen2.5:0.5b`/`1.5b`) occasionally emit malformed JSON, especially from planner's sub-task decomposition — this is normal and will trigger the halt gate, not a bug to chase.
+- **Small local models** (`qwen2.5:0.5b`/`1.5b`) occasionally emit malformed JSON or wrong-typed fields, especially from planner's sub-task decomposition. Three specific shapes found live are now handled gracefully instead of halting the swarm (a dead-subject capability default, malformed JSON syntax, list-shaped fields where a string was expected) — but this is closing known cases, not eliminating the underlying unreliability. A new malformed-output shape can still trigger the halt gate; that's expected, not a bug to chase on its own.
+- **The diagnostician only ever diagnoses, never resolves.** It writes a real diagnosis for every halt (root cause + suggested action, and whether the same failure class has recurred recently) but always leaves the halt for a human to clear — a deliberate choice, not a missing feature. Fixing an actual code defect still needs a human — or, per [`docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md`](docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md)'s addendum, a real coding-agent tier that doesn't exist yet.
 
 ---
 

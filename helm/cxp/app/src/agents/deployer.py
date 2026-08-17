@@ -10,6 +10,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+
+import yaml
 
 from ..agent_shell import AgentShell, strip_code_fence
 from ..packet import CXPPacket
@@ -20,6 +23,12 @@ log = logging.getLogger(__name__)
 DEPLOY_NAMESPACE = os.environ.get("CXP_DEPLOY_NAMESPACE", "cxp-sandbox")
 # Minimum score required before deployment
 DEPLOY_THRESHOLD = float(os.environ.get("CXP_DEPLOY_THRESHOLD", "0.85"))
+# How long to give an applied Deployment to actually become healthy before
+# reporting the deploy as failed rather than just "applied". Generous
+# enough for a real image pull; a made-up image reference (the common
+# case with a small model) shows ImagePullBackOff well within this.
+DEPLOY_READY_TIMEOUT_SECONDS = 30
+DEPLOY_READY_POLL_SECONDS = 3
 
 
 class DeployerAgent(AgentShell):
@@ -118,10 +127,19 @@ class DeployerAgent(AgentShell):
     def _looks_like_yaml(self, text: str) -> bool:
         return any(text.startswith(k) for k in ("apiVersion:", "kind:", "---\napiVersion"))
 
-    async def _deploy_yaml(self, yaml: str) -> dict:
-        """kubectl apply in sandbox namespace only."""
+    async def _deploy_yaml(self, yaml_text: str) -> dict:
+        """kubectl apply in sandbox namespace only, then verify any applied
+        Deployments actually become healthy. `kubectl apply` succeeding only
+        means the API server accepted the manifest -- it says nothing about
+        whether the pods it creates ever actually run. Found live
+        2026-08-17: every YAML deploy reported "deployed": true even though
+        the LLM's invented image references meant every single one was
+        permanently stuck in ImagePullBackOff, because nothing after the
+        apply ever checked. This was a real signal quietly poisoning
+        reflect/memory: every deploy attempt was being recorded as a
+        success regardless of whether anything real ever ran."""
         with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
-            f.write(yaml)
+            f.write(yaml_text)
             fname = f.name
 
         try:
@@ -139,16 +157,74 @@ class DeployerAgent(AgentShell):
                 ["kubectl", "apply", "-f", fname, f"--namespace={DEPLOY_NAMESPACE}"],
                 capture_output=True, text=True, timeout=30
             )
+            if result.returncode != 0:
+                return {
+                    "deployed": False, "outcome": "failed",
+                    "stdout": result.stdout[:400], "stderr": result.stderr[:200],
+                }
+
+            deployment_names = self._deployment_names(yaml_text)
+            if deployment_names:
+                all_ready, not_ready = self._wait_for_deployments_ready(deployment_names)
+                if not all_ready:
+                    return {
+                        "deployed": False,
+                        "outcome": "applied but never became healthy",
+                        "stdout": result.stdout[:400],
+                        "unhealthy_deployments": not_ready,
+                    }
+
             return {
-                "deployed": result.returncode == 0,
-                "outcome": "applied" if result.returncode == 0 else "failed",
+                "deployed": True,
+                "outcome": "applied",
                 "stdout": result.stdout[:400],
-                "stderr": result.stderr[:200] if result.returncode != 0 else "",
+                "stderr": "",
             }
         except subprocess.TimeoutExpired:
             return {"deployed": False, "outcome": "timeout"}
         finally:
             os.unlink(fname)
+
+    @staticmethod
+    def _deployment_names(yaml_text: str) -> list[str]:
+        """Names of any Deployment resources in a (possibly multi-document)
+        manifest -- the only resource kind here with an objectively
+        checkable "did it actually work" signal (readyReplicas), as
+        opposed to a Service/ConfigMap which just exist-or-don't."""
+        names = []
+        try:
+            for doc in yaml.safe_load_all(yaml_text):
+                if isinstance(doc, dict) and doc.get("kind") == "Deployment":
+                    name = (doc.get("metadata") or {}).get("name")
+                    if name:
+                        names.append(name)
+        except yaml.YAMLError:
+            pass
+        return names
+
+    def _wait_for_deployments_ready(self, names: list[str]) -> tuple[bool, list[str]]:
+        """Poll each named Deployment for real readiness. Returns
+        (all_ready, names_still_not_ready_at_the_deadline)."""
+        deadline = time.time() + DEPLOY_READY_TIMEOUT_SECONDS
+        remaining = set(names)
+        while remaining and time.time() < deadline:
+            for name in list(remaining):
+                probe = subprocess.run(
+                    ["kubectl", "get", "deployment", name,
+                     f"--namespace={DEPLOY_NAMESPACE}", "-o", "json"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if probe.returncode != 0:
+                    continue
+                try:
+                    ready = json.loads(probe.stdout).get("status", {}).get("readyReplicas", 0)
+                except json.JSONDecodeError:
+                    ready = 0
+                if ready:
+                    remaining.discard(name)
+            if remaining:
+                time.sleep(DEPLOY_READY_POLL_SECONDS)
+        return not remaining, sorted(remaining)
 
     async def _run_python(self, code: str, goal: str) -> dict:
         """Run Python in isolated subprocess with timeout."""

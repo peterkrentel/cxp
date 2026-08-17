@@ -8,7 +8,7 @@ import logging
 import os
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import nats
 from fastapi import FastAPI, Request
@@ -92,20 +92,34 @@ async def get_stream_health() -> list[dict]:
     return out
 
 
+DUPLICATE_RECENCY_MINUTES = 20
+
+
 def get_duplicate_packets() -> list[dict]:
     """Any packet id completed more than once in the current in-memory
-    buffer -- the direct symptom of the 2026-08-17 duplicate-processing
-    bug. Computed from packets this dashboard process has already seen
-    (state["packets"]), not a new subscription, so it only reflects
-    activity since this pod last started."""
+    buffer, where the most recent completion is still recent -- the direct
+    symptom of the 2026-08-17 duplicate-processing bug. Recency-gated
+    rather than "ever duplicated in this buffer" so a resolved incident
+    stops being flagged once it's aged out, instead of lingering
+    indefinitely until this pod happens to restart or ~100 more packets
+    push the raw entries out of state["packets"]'s capped buffer. Found
+    confusing live 2026-08-17: the same pre-fix duplicates kept showing
+    for many minutes after the fix that stopped them was already deployed
+    and separately confirmed to be holding."""
     by_id: dict[str, list[dict]] = {}
     for p in state["packets"]:
         by_id.setdefault(p["id"], []).append(p)
-    return [
-        {"id": pid, "capability": entries[0].get("capability"),
-         "timestamps": [e["timestamp"] for e in entries]}
-        for pid, entries in by_id.items() if len(entries) > 1
-    ]
+    cutoff = datetime.now() - timedelta(minutes=DUPLICATE_RECENCY_MINUTES)
+    result = []
+    for pid, entries in by_id.items():
+        if len(entries) <= 1:
+            continue
+        timestamps = [e["timestamp"] for e in entries]
+        most_recent = max(datetime.fromisoformat(ts) for ts in timestamps)
+        if most_recent < cutoff:
+            continue
+        result.append({"id": pid, "capability": entries[0].get("capability"), "timestamps": timestamps})
+    return result
 
 
 async def subscribe_nats():
@@ -294,7 +308,7 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
 </div>
 
 <div class="panel" id="dup-banner" style="display:none; border-color:#ff4444; background:#2a0a0a; color:#ff6666; margin-bottom:8px">
-  <div>⚠ DUPLICATE PACKET COMPLETIONS DETECTED — a packet finished more than once since this dashboard last restarted. This is the exact symptom of the 2026-08-17 redelivery bug; if this reappears after a fix has been deployed, that fix isn't holding.</div>
+  <div>⚠ DUPLICATE PACKET COMPLETIONS DETECTED — a packet finished more than once within the last 20 minutes. This is the exact symptom of the 2026-08-17 redelivery bug; if this appears after a fix has been deployed, that fix isn't holding. Clears on its own once nothing new is added for 20 minutes.</div>
   <table style="margin-top:4px"><thead><tr><th>Packet</th><th>Cap</th><th>Times seen</th></tr></thead><tbody id="dup-rows"></tbody></table>
 </div>
 

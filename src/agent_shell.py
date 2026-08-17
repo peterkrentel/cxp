@@ -57,6 +57,13 @@ OLLAMA_SLOT_POLL_SECONDS = 1.0
 # worker that thinks it's now free to take over.
 INFLIGHT_STALE_SECONDS = 960
 
+# How long a "done" claim marker is kept around before it's eligible for
+# pruning -- long enough to catch a late redelivery (observed live
+# 2026-08-17 landing ~960-1080s after the original completion, triggered
+# by an ack() that apparently didn't register), short enough that this
+# bucket doesn't grow forever across the swarm's lifetime.
+DONE_CLAIM_RETENTION_SECONDS = 7200
+
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
 # published while no replica happens to be subscribed (mid-rollout, pod
 # restart) isn't silently lost — it's redelivered once a consumer is back.
@@ -239,41 +246,56 @@ class AgentShell(ABC):
 
     async def _claim_packet(self, packet_id: str) -> bool:
         """Atomically claim a packet id for execution. Returns False if
-        another delivery of the same packet already holds a live claim --
-        the caller must then just ack and skip, not execute again.
+        another delivery of the same packet already holds a live claim, OR
+        already finished it -- the caller must then just ack and skip, not
+        execute again.
 
         This exists because JetStream's delivery guarantee is at-least-once,
         not exactly-once: a heartbeat ping delayed even once past ack_wait
-        (observed live 2026-08-17 under heavy concurrent load, cause not yet
-        pinned down) triggers a real redelivery to another consumer while the
-        first copy keeps running to completion regardless -- both then
+        triggers a real redelivery to another consumer while the first copy
+        keeps running (or has already finished) regardless -- both then
         publish a "done" result and both run any real side effects (skill
-        writes, deploys) a second time. Fixing that requires this fence
-        regardless of whether the underlying heartbeat-miss ever gets fully
-        root-caused: JetStream permits redelivery by design, so exactly-once
-        execution has to be enforced here, not assumed from ack_wait alone.
+        writes, deploys) a second time.
+
+        Found live 2026-08-17: a *second*, more fundamental instance of this
+        even after the fail-open fix below. Several duplicate completions
+        landed ~960-1080s apart (right around INFLIGHT_STALE_SECONDS=960)
+        despite the original delivery completing and calling
+        _mark_packet_done() successfully. Root cause: the claim used to be
+        released (deleted) only *after* msg.ack() succeeded -- if ack()
+        itself ever throws or silently fails to register (a real
+        possibility this fence can't rule out), the release/mark-done step
+        never runs at all, the claim's timestamp is never refreshed, and a
+        later JetStream redelivery (triggered by the failed ack) finds a
+        now-stale claim and correctly-by-the-rules reclaims it as
+        abandoned -- reprocessing the entire task from scratch. Fixed by
+        marking completion *before* the risky publish/ack steps (see
+        _mark_packet_done, called right after _execute() returns in
+        handle()) and by distinguishing "genuinely still running" from
+        "already finished" via a status field: a finished claim is never
+        eligible for the stale-abandoned-crash reclaim path.
         """
         kv = await self._kv(KV_INFLIGHT)
         now = time.time()
         try:
-            await kv.create(packet_id, json.dumps({"agent": self.agent_id, "ts": now}).encode())
+            await kv.create(packet_id,
+                             json.dumps({"agent": self.agent_id, "ts": now, "status": "in_progress"}).encode())
             return True
         except Exception:
             pass  # key already exists -- someone holds (or held) this claim
 
         # The create() above failing PROVES a claim already exists -- not
-        # being able to read it doesn't mean it's gone. Found live
-        # 2026-08-17: this used to fail open (return True, "safe to
-        # execute") on any transient KV read error, which is backwards and
-        # reopened the exact duplicate-execution bug this fence exists to
-        # close. It disproportionately hit the assess capability -- by far
-        # the highest-throughput agent, so the most likely to hit a
-        # transient JetStream read blip under real concurrent load. Retry
-        # a few times for an ordinary blip; if it still can't be read,
-        # fail CLOSED (assume live, reject) rather than open (assume
-        # abandoned, re-execute) -- occasionally dropping a packet on a
-        # persistent KV outage is a far smaller cost than silently
-        # re-running real side effects (deploys, skill writes) a second time.
+        # being able to read it doesn't mean it's gone. This used to fail
+        # open (return True, "safe to execute") on any transient KV read
+        # error, which is backwards and reopened the exact duplicate-
+        # execution bug this fence exists to close. It disproportionately
+        # hit the assess capability -- by far the highest-throughput agent,
+        # so the most likely to hit a transient JetStream read blip under
+        # real concurrent load. Retry a few times for an ordinary blip; if
+        # it still can't be read, fail CLOSED (assume live, reject) rather
+        # than open (assume abandoned, re-execute) -- occasionally dropping
+        # a packet on a persistent KV outage is a far smaller cost than
+        # silently re-running real side effects a second time.
         claim = None
         entry = None
         for attempt in range(3):
@@ -288,21 +310,50 @@ class AgentShell(ABC):
                     return False
                 await asyncio.sleep(0.2)
 
-        if now - claim.get("ts", 0) < INFLIGHT_STALE_SECONDS:
+        if claim.get("status") == "done":
+            # Already finished -- never eligible for reclaim on staleness
+            # grounds. A redelivery arriving any time later (that's the
+            # whole failure mode this fix closes) must still be rejected,
+            # not mistaken for an abandoned in-progress claim. Only an
+            # extremely old "done" marker (long past any plausible
+            # redelivery lag) is pruned, so this bucket doesn't grow
+            # forever across the swarm's lifetime.
+            if now - claim.get("ts", 0) < DONE_CLAIM_RETENTION_SECONDS:
+                return False
+        elif now - claim.get("ts", 0) < INFLIGHT_STALE_SECONDS:
             return False
+
         try:
-            await kv.update(packet_id, json.dumps({"agent": self.agent_id, "ts": now}).encode(),
+            await kv.update(packet_id,
+                             json.dumps({"agent": self.agent_id, "ts": now, "status": "in_progress"}).encode(),
                              last=entry.revision)
             return True
         except Exception:
             return False  # lost the race to whoever else just reclaimed it
 
-    async def _release_packet_claim(self, packet_id: str) -> None:
+    async def _mark_packet_done(self, packet_id: str) -> None:
+        """Mark a claim as finished rather than deleting it. Deleting made
+        a completed packet indistinguishable from "never claimed" -- any
+        later redelivery of the same message (confirmed live 2026-08-17,
+        arriving well after the original had already finished) was then
+        treated as brand new work and fully re-executed. A "done" marker
+        is instead kept around for DONE_CLAIM_RETENTION_SECONDS so a late
+        redelivery is correctly recognized and rejected. Called right after
+        _execute() returns, deliberately *before* the publish/emit_status/
+        ack sequence -- so even if ack() itself throws or never registers,
+        the fact that this packet is done is already durably recorded."""
         kv = await self._kv(KV_INFLIGHT)
-        try:
-            await kv.delete(packet_id)
-        except Exception:
-            pass  # best-effort tidy-up; a stale leftover just expires later
+        now = time.time()
+        for _ in range(5):  # bounded CAS retry against concurrent writers
+            try:
+                entry = await kv.get(packet_id)
+                await kv.update(packet_id,
+                                 json.dumps({"agent": self.agent_id, "ts": now, "status": "done"}).encode(),
+                                 last=entry.revision)
+                return
+            except Exception:
+                continue
+        log.error("[%s] could not mark packet %s done after retries", self.agent_id, packet_id[:8])
 
     async def disconnect(self) -> None:
         if self._nc:
@@ -395,22 +446,25 @@ class AgentShell(ABC):
             except asyncio.CancelledError:
                 pass
 
-        # The claim must stay live through publish+ack, not just through
-        # _execute() -- releasing it here (as an earlier version of this
-        # fix did) reopens the exact race the fence exists to close: the
-        # heartbeat already stopped once _execute() returns, so if
-        # _publish/_emit_status/ack takes long enough to run past
-        # whatever ack_wait budget is left, JetStream can redeliver in
-        # that gap. With the claim already released, the redelivered
-        # copy looks brand new and reruns the whole task, producing a
-        # second real "done" result. Confirmed live 2026-08-17: 4 planner
-        # packets each completed twice, ~10-15 minutes apart, on an agent
-        # with a single replica -- not two replicas racing, just this
-        # exact post-execute window.
+        # Marked done here -- immediately once _execute() has genuinely
+        # finished (success or failure), before the publish/emit_status/ack
+        # sequence below, not after. An earlier version of this fix marked
+        # completion only *after* msg.ack() succeeded, which reopened the
+        # exact race this fence exists to close: if ack() itself ever
+        # throws or silently fails to register, that release/mark-done
+        # step never runs, the claim's timestamp never gets refreshed, and
+        # a later JetStream redelivery (triggered by the failed ack) finds
+        # a now-stale claim and correctly-by-the-rules reclaims it as an
+        # abandoned crash -- reprocessing the entire task from scratch.
+        # Confirmed live 2026-08-17: several packets completed twice,
+        # ~960-1080s apart (right around INFLIGHT_STALE_SECONDS), even
+        # after the first fence fix. Marking done up front means the fact
+        # that this packet is finished is durably recorded no matter what
+        # happens to publish/ack afterward.
+        await self._mark_packet_done(packet.id)
         await self._publish(SUBJECT_RESULTS, packet)
         await self._emit_status("idle")
         await msg.ack()
-        await self._release_packet_claim(packet.id)
 
     async def run(self) -> None:
         await self.connect()

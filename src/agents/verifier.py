@@ -46,7 +46,7 @@ class VerifierAgent(AgentShell):
         try:
             result = json.loads(raw, strict=False)
         except json.JSONDecodeError as e:
-            log.error(f"Failed to parse verifier response: {e}\nRaw: {raw[:200]}")
+            await self.record_validation_failure("verify response JSON parse", f"{e}\nRaw: {raw[:200]}")
             # Default to fail if we can't parse
             result = {"score": 0.0, "passed": False, "issues": [f"Parse error: {e}"], "suggestion": "Malformed response"}
 

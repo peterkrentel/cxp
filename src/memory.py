@@ -83,6 +83,12 @@ class MemoryStore:
         if fact not in self.semantic:
             self.semantic.append(fact)
             self._pending_semantic.append(fact)
+            # unlike episodic, this had no cap at all -- fine while it was
+            # only reflect's occasional distilled facts, not fine now that
+            # every agent's validation failures also land here (see
+            # record_validation_failure). Same 200-entry window as episodic.
+            if len(self.semantic) > 200:
+                self.semantic = self.semantic[-200:]
 
     def all_reputations(self) -> list[AgentReputation]:
         out = []
@@ -131,7 +137,7 @@ class MemoryStore:
                 for fact in pending_semantic:
                     if fact not in semantic:
                         semantic.append(fact)
-                data["semantic"] = semantic
+                data["semantic"] = semantic[-200:]
                 with open(MEMORY_PATH, "w") as f:
                     json.dump(data, f, indent=2)
                 return data

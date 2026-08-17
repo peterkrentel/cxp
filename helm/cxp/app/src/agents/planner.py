@@ -58,7 +58,7 @@ class PlannerAgent(AgentShell):
         try:
             sub_tasks: list[dict] = json.loads(raw, strict=False)
         except json.JSONDecodeError as e:
-            log.error(f"Failed to parse planner response: {e}\nRaw: {raw[:200]}")
+            await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
             return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
         for task in sub_tasks:
@@ -94,7 +94,7 @@ class PlannerAgent(AgentShell):
                     routing_hints=RoutingHints(next_type=PacketType.VERIFY),
                 )
             except Exception as e:
-                log.error(f"Skipping malformed sub-task in planner decomposition: {e}\nTask: {task}")
+                await self.record_validation_failure("malformed sub-task", f"{e}\nTask: {task}")
                 continue
             child.append_trace(self.agent_id, "created", "spawned by planner")
             await self.emit_packet(child)

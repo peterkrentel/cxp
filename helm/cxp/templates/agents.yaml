@@ -75,6 +75,11 @@ spec:
             - { name: NATS_URL,       value: "{{ $.Values.natsUrl }}" }
             - { name: OLLAMA_URL,     value: "{{ if eq $name "assessor" }}{{ $.Values.ollamaSmallUrl }}{{ else }}{{ $.Values.ollamaUrl }}{{ end }}" }
             - { name: OLLAMA_MODEL,   value: "{{ if $cfg.model }}{{ $cfg.model }}{{ else }}{{ $.Values.ollamaModel }}{{ end }}" }
+            # Real per-instance concurrency ceiling, so acquire_ollama_slot()
+            # waits on the same capacity Ollama itself is actually enforcing.
+            # Main is explicitly capped at OLLAMA_NUM_PARALLEL=2 (values.yaml);
+            # ollama-small has no override, so it runs Ollama's own default (4).
+            - { name: OLLAMA_MAX_PARALLEL, value: "{{ if eq $name "assessor" }}4{{ else }}2{{ end }}" }
             - { name: CXP_SKILLS_DIR, value: /skills }
             - { name: CXP_MEMORY_PATH,value: /data/memory.json }
             - { name: PYTHONPATH,     value: /app/packages }

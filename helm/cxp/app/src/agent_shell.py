@@ -300,14 +300,22 @@ class AgentShell(ABC):
         missing model raises RuntimeError rather than silently pulling."""
         import httpx
 
-        # connect=10s, first-token=30s, between-tokens=60s
-        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
-        # read=60.0 above is a PER-CHUNK timeout — it only fires if NO data
-        # arrives for 60s. A response that trickles back even a token every
-        # ~59s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
+        # connect=10s, first-token=30s, between-tokens=120s
+        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
+        # read=120.0 above is a PER-CHUNK timeout — it only fires if NO data
+        # arrives for 120s. A response that trickles back even a token every
+        # ~119s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
         # bounds the whole call regardless of how the time gets spent, and
         # is kept below ack_wait (300s) so this fails and halts before
         # JetStream would redeliver the same message to another attempt.
+        #
+        # Was 60s. Found live (2026-08-17): main Ollama's OLLAMA_NUM_PARALLEL=2
+        # means a 3rd concurrent request queues correctly inside Ollama rather
+        # than being refused -- but the client's per-chunk timeout couldn't
+        # distinguish "queued, zero bytes yet, waiting its turn" from "stuck,"
+        # and gave up before the two ahead of it (observed 50-141s) finished.
+        # 120s gives real headroom for one realistic request ahead of it to
+        # finish, while 240s total still catches an actually-dead connection.
         LLM_TOTAL_TIMEOUT = 240.0
 
         await self._think(f"  ⟳ LLM ({len(user)} chars): {user[:120]}…")

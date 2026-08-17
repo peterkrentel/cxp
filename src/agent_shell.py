@@ -361,21 +361,26 @@ class AgentShell(ABC):
         missing model raises RuntimeError rather than silently pulling."""
         import httpx
 
-        # connect=10s, first-token=30s, between-tokens=60s
-        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
-        # read=60.0 above is a PER-CHUNK timeout — it only fires if NO data
-        # arrives for 60s. A response that trickles back even a token every
-        # ~59s never trips it and can hang indefinitely. LLM_TOTAL_TIMEOUT
-        # bounds the whole call regardless of how the time gets spent, and
-        # is kept below ack_wait (300s) so this fails and halts before
-        # JetStream would redeliver the same message to another attempt.
+        # connect=10s, write=10s, NO per-chunk read limit (see below) --
+        # LLM_TOTAL_TIMEOUT is the one and only "how long is too long"
+        # threshold for the whole call.
+        timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
         #
-        # This is deliberately NOT padded to tolerate Ollama's own queueing
-        # under OLLAMA_NUM_PARALLEL -- that's acquire_ollama_slot()'s job,
-        # below: block on real availability (a JetStream KV semaphore),
-        # not a bigger guess at how long a queue wait might take. Once a
-        # slot is actually acquired, "no token in 60s" is a real signal
-        # again, not queueing noise.
+        # Used to also have a 60s PER-CHUNK read timeout here, stacked on
+        # top of the total. Found live (2026-08-17): this actively kills
+        # requests Ollama is still genuinely working on. Ollama's own
+        # server log showed a real verifier request complete successfully
+        # in 59.999922528s -- a hair under the 60s per-chunk limit -- and
+        # the client gave up microseconds before the response arrived. The
+        # per-chunk timeout was meant to catch a truly-dead connection, but
+        # LLM_TOTAL_TIMEOUT already does that job, with real margin chosen
+        # from observed data -- no reason to guess at a second, tighter
+        # threshold on top of it. A genuinely dead connection (zero bytes
+        # for the entire budget) still gets caught below; a slow-but-
+        # working one no longer gets killed partway through for no reason.
+        #
+        # Kept below ack_wait (300s) so this fails and halts before
+        # JetStream would redeliver the same message to another attempt.
         LLM_TOTAL_TIMEOUT = 240.0
 
         max_slots = int(os.environ.get("OLLAMA_MAX_PARALLEL", "2"))

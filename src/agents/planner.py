@@ -10,6 +10,17 @@ from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 log = logging.getLogger(__name__)
 
+
+def _coerce_str(value: object) -> str:
+    """Small models occasionally return a list of strings where a single
+    string field was asked for (e.g. instructions as several bullet points)
+    -- join rather than let Payload's str-typed field reject the whole
+    sub-task with a pydantic ValidationError."""
+    if isinstance(value, list):
+        return " ".join(str(v) for v in value)
+    return str(value) if value is not None else ""
+
+
 BASE_SYSTEM = """You are a task planner in a distributed AI swarm.
 Given a high-level goal, decompose it into 2-5 focused sub-tasks.
 Return ONLY a JSON array of objects with these fields:
@@ -63,20 +74,28 @@ class PlannerAgent(AgentShell):
             capability = task.get("capability") or type_str
             if capability not in ("code", "verify", "reflect"):
                 capability = "code"
-            child = CXPPacket(
-                origin=self.agent_id,
-                type=PacketType(type_str),
-                capability=capability,
-                priority=int(task.get("priority", 2)),
-                task_id=packet.task_id,
-                parent_packet_id=packet.id,
-                payload=Payload(
-                    goal=task.get("goal", ""),
-                    instructions=task.get("instructions", ""),
-                    context=packet.payload.output or packet.payload.context,
-                ),
-                routing_hints=RoutingHints(next_type=PacketType.VERIFY),
-            )
+            # PacketType(type_str) below also raises if the model invents a
+            # type outside PacketType's enum -- wrapped in the same try so
+            # neither that nor any other unexpected shape from this one
+            # sub-task can crash the whole decomposition.
+            try:
+                child = CXPPacket(
+                    origin=self.agent_id,
+                    type=PacketType(type_str),
+                    capability=capability,
+                    priority=int(task.get("priority", 2)),
+                    task_id=packet.task_id,
+                    parent_packet_id=packet.id,
+                    payload=Payload(
+                        goal=_coerce_str(task.get("goal", "")),
+                        instructions=_coerce_str(task.get("instructions", "")),
+                        context=packet.payload.output or packet.payload.context,
+                    ),
+                    routing_hints=RoutingHints(next_type=PacketType.VERIFY),
+                )
+            except Exception as e:
+                log.error(f"Skipping malformed sub-task in planner decomposition: {e}\nTask: {task}")
+                continue
             child.append_trace(self.agent_id, "created", "spawned by planner")
             await self.emit_packet(child)
 

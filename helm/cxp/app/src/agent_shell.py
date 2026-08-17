@@ -37,10 +37,11 @@ KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a re
 
 # A slot claim older than this is treated as abandoned (its holder crashed or
 # got killed without releasing) and gets pruned on the next acquire attempt,
-# rather than permanently shrinking that instance's real capacity. Set above
-# LLM_TOTAL_TIMEOUT (240s, in llm() below) so a legitimately-still-running
-# call is never mistaken for an abandoned one.
-OLLAMA_SLOT_STALE_SECONDS = 280
+# rather than permanently shrinking that instance's real capacity. Must stay
+# above LLM_TOTAL_TIMEOUT (900s, in llm() below) so a legitimately-still-
+# running call is never mistaken for an abandoned one -- raised alongside it
+# when the heartbeat mechanism let that ceiling go from 240s to 900s.
+OLLAMA_SLOT_STALE_SECONDS = 960
 OLLAMA_SLOT_POLL_SECONDS = 1.0
 
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
@@ -258,6 +259,23 @@ class AgentShell(ABC):
             packet.claim(self.agent_id)
             await self._emit_status("working", packet)
 
+            # Tell JetStream "still alive" every 90s (well under ack_wait's
+            # 300s) for as long as _execute() genuinely keeps running --
+            # decouples "how long can a legitimate LLM call take" from
+            # "when does JetStream assume this pod died and redelivers to
+            # someone else" entirely. A real generation can now take as
+            # long as it actually needs; only a pod that's genuinely
+            # crashed (heartbeats stop with it) still triggers redelivery,
+            # exactly the resilience ack_wait was built for.
+            async def _heartbeat() -> None:
+                while True:
+                    await asyncio.sleep(90)
+                    try:
+                        await msg.in_progress()
+                    except Exception:
+                        pass  # best-effort; a missed heartbeat isn't fatal on its own
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
             try:
                 await self._think(f"▶ TASK: {packet.payload.goal}")
                 await self._think(f"  cap={packet.capability}  id={packet.id[:8]}")
@@ -280,6 +298,12 @@ class AgentShell(ABC):
                 await self._think(f"✗ ERROR: {packet.id[:8]} — {detail} — swarm halted, awaiting human")
                 log.error("[%s] ✗ %s: %s — swarm halted", self.agent_id, packet.id[:8], detail, exc_info=True)
                 await self._emit_diagnose_request(packet, detail)
+            finally:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
             await self._publish(SUBJECT_RESULTS, packet)
             await self._emit_status("idle")
@@ -379,9 +403,23 @@ class AgentShell(ABC):
         # for the entire budget) still gets caught below; a slow-but-
         # working one no longer gets killed partway through for no reason.
         #
-        # Kept below ack_wait (300s) so this fails and halts before
-        # JetStream would redeliver the same message to another attempt.
-        LLM_TOTAL_TIMEOUT = 240.0
+        # Used to be kept below ack_wait (300s) specifically so this failed
+        # and halted before JetStream would redeliver the same message to
+        # another attempt -- found live (2026-08-17) that this coupling
+        # itself was the wrong fix: real requests kept landing within a
+        # couple seconds of 240s and succeeding anyway (observed up to
+        # 239s), meaning legitimate work under real CPU-only load routinely
+        # needs several minutes, and no timeout number was going to feel
+        # right. The real fix is handle()'s heartbeat loop above (msg.
+        # in_progress() every 90s), which decouples "how long can a
+        # legitimate call take" from ack_wait's redelivery entirely -- a
+        # pod that's actually still working keeps the packet alive no
+        # matter how long it takes; only a genuinely crashed pod (heartbeat
+        # stops with it) still triggers redelivery. This is now a true
+        # "something is definitely wrong" backstop, not a guess at typical
+        # duration -- picked generously since there's no longer a reason to
+        # keep it tight.
+        LLM_TOTAL_TIMEOUT = 900.0
 
         max_slots = int(os.environ.get("OLLAMA_MAX_PARALLEL", "2"))
         claim_id = await self.acquire_ollama_slot(OLLAMA_URL, max_slots)

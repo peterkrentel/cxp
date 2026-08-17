@@ -8,6 +8,8 @@
 
 **Architecture:** Each Python agent (`AgentShell` subclasses) instruments itself directly with the OpenTelemetry Python SDK — metrics (counters/histograms) and optionally traces for the plan→code→verify→reflect pipeline — and exports via OTLP straight to Grafana Cloud's OTLP gateway endpoint. **No self-hosted Prometheus, no Grafana Agent/Alloy scrape step, no local OTel Collector** — the user's explicit call, since Grafana Cloud accepts OTLP directly and a self-hosted metrics stack has its own real CPU/memory footprint on a node that's already tight on Ollama's budget (the exact contention problem this whole project has fought all day). Grafana Cloud's hosted backend (Mimir-based) is the storage and query layer; Grafana Cloud's own hosted Grafana is the dashboard — nothing new to operate locally.
 
+**Deliberately app-metrics-only, not cluster metrics.** This plan covers what the app itself knows (LLM latency, halt outcomes, packet processing) — it does not cover node/pod CPU/memory over time, which is a different data source (kubelet/cAdvisor, not something Python code can see about its own container) and would need its own collection path (e.g. Grafana Alloy scraping `metrics-server`, still no self-hosted Prometheus). Decided 2026-08-16 to leave that out of scope for now: `scripts/health-check.sh` already gives sufficient point-in-time cluster visibility, and a continuous cluster-metrics *history* is much less valuable on a laptop-hosted kind cluster that restarts/sleeps constantly anyway — the data would be gappy and hard to trust until there's a persistent host. App telemetry is the nearer-term need; cluster metrics (via Alloy, once there's a real VM with real uptime to make the history meaningful) is a good later addition, not a gap in this plan.
+
 **Tech Stack:** `opentelemetry-sdk`, `opentelemetry-exporter-otlp` (Python), Grafana Cloud (OTLP ingestion endpoint + hosted Grafana), no new Kubernetes workloads.
 
 ## Global Constraints
@@ -203,6 +205,32 @@ git commit -m "feat: wire optional Grafana Cloud OTLP credential into every agen
 ```
 
 Note: no `values.yaml` change ended up needed — the endpoint comes from the Secret (Step 1), not a plain value, since it's not meaningfully different in sensitivity from the auth header itself (both identify which Grafana Cloud account receives data).
+
+---
+
+### Task 4: Alert rules on top of the metrics
+
+**Files:**
+- Create: no repo file — Grafana Cloud alert rules are configured in the Grafana Cloud UI/API against the metrics Tasks 1-2 already export, not committed to this repo. (If Grafana Cloud's Terraform provider or `grafana` CLI is ever used to manage rules as code, that would live under a new `ops/grafana/` directory — not needed for a first pass with 3-4 rules.)
+
+**Interfaces:**
+- Consumes: `cxp_halts_total{auto_resolved}` (Task 2), `cxp_llm_calls_total{outcome}` and `cxp_packets_processed_total{capability}` (Task 1) — all already labeled to support the queries below.
+
+- [ ] **Step 1: Alert on a halt that doesn't auto-resolve**
+
+Query (Grafana Cloud alert rule, PromQL-compatible since Mimir speaks Prometheus's query language regardless of OTLP ingestion): `increase(cxp_halts_total{auto_resolved="false"}[10m]) > 0`. Fires within 10 minutes of any non-timeout halt — the exact class that sat unnoticed until a human happened to look, today, more than once.
+
+- [ ] **Step 2: Alert on the dead-subject pattern recurring**
+
+There's no direct OTel metric for JetStream subject counts today (that's `nats`-side data, not something `AgentShell` emits) — so this specific alert needs either (a) a small addition to Task 1 exposing a gauge for known-bad-capability packet counts if `planner.py`'s fallback-to-`"code"` path (already fixed) ever fires, using the existing `PACKETS_PROCESSED_TOTAL` counter with a `capability="unrecognized"` label, or (b) skip this one for the first alerting pass since the underlying bug is already fixed and this is closer to a regression guard than a live need. Recommend (b) — ship the two alerts below first, revisit this one only if the underlying bug class recurs.
+
+- [ ] **Step 3: Alert on LLM calls going silent**
+
+Query: `absent_over_time(cxp_llm_calls_total[10m])` — fires if literally zero LLM calls happened anywhere in the swarm for 10 minutes straight, the exact signature of a hung agent (like the 80-minute planner hang found today) rather than the swarm just being between tasks with nothing submitted (a healthy idle swarm still shows zero calls, so this alert needs a companion condition — e.g. also check `cxp_packets_processed_total` shows no completions in the same window, to distinguish "nothing submitted" from "something's stuck" — refine this condition once real data from Tasks 1-3 exists to see which false-positive rate is actually acceptable).
+
+- [ ] **Step 4: Wire notification delivery**
+
+Grafana Cloud alert rules need a notification channel (email, Slack webhook, etc.) configured once, in the Grafana Cloud UI — not a repo change. Decide the channel once this task is picked up.
 
 ---
 

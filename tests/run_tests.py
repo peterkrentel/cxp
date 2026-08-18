@@ -74,6 +74,17 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
     for DECOMPOSITION) and verify_issues (accumulated issues text from every
     verify packet on the task — for SECURITY_AWARENESS, which cares whether
     the verifier *flagged* something, not just whether code compiled).
+
+    Requires BOTH a done code packet AND at least one done verify packet
+    before considering a task settled -- found live 2026-08-18: the exit
+    condition used to check only `if code_pkt`, exiting the moment code
+    finished and capturing whatever `best_score` happened to be at that
+    instant (verify runs strictly after code, so this was reliably still
+    0.0 -- not because anything scored badly, but because verify hadn't
+    even started yet). Every prior "low score" result produced by this
+    function is suspect for the same reason. `verify_seen` is tracked
+    separately from `best_score` so a real, legitimate score of 0.0 from
+    the verifier is never confused with "verify hasn't run yet".
     """
     deadline = time.time() + timeout
     results = {}
@@ -84,6 +95,7 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
             code_pkt = None
             best_score = 0.0
             code_count = 0
+            verify_seen = False
             verify_issues: list[str] = []
             for p in packets:
                 if p.get("task_id") != task_id:
@@ -93,12 +105,13 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
                     if p.get("status") == "done" and p.get("output"):
                         code_pkt = p
                 if p.get("type") == "verify" and p.get("status") == "done":
+                    verify_seen = True
                     best_score = max(best_score, p.get("score") or 0.0)
                     try:
                         verify_issues.extend(json.loads(p.get("output") or "{}").get("issues", []))
                     except Exception:
                         pass
-            if code_pkt:
+            if code_pkt and verify_seen:
                 results[task_id] = {**code_pkt, "score": best_score,
                                      "code_count": code_count, "verify_issues": verify_issues}
                 pending.discard(task_id)

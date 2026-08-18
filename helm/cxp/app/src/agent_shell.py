@@ -331,6 +331,45 @@ class AgentShell(ABC):
         except Exception:
             return False  # lost the race to whoever else just reclaimed it
 
+    async def _refresh_packet_claim(self, packet_id: str) -> None:
+        """Bump a live claim's timestamp so it never goes stale while its
+        holder is genuinely still alive and heartbeating.
+
+        Found live 2026-08-17: the claim's staleness clock was a single
+        fixed timestamp set once at claim time, completely disconnected
+        from whether the holder was actually still working -- unlike
+        JetStream's own ack_wait, which the heartbeat already resets every
+        90s via msg.in_progress(). Under real Ollama-slot contention (both
+        concurrent slots full most of the night, made worse by adding a
+        second verifier replica competing for the same two slots), one
+        verify call legitimately took 34 minutes -- almost entirely spent
+        waiting for a free slot before the LLM call even started -- which
+        blew past INFLIGHT_STALE_SECONDS (960s) even though the holder
+        never crashed. A second delivery then correctly-by-the-old-rules
+        reclaimed it as abandoned and re-executed the whole task, producing
+        a real duplicate with a different (non-deterministic) verifier
+        score. Refreshing the claim's timestamp on every heartbeat -- the
+        same cadence already proven reliable for JetStream's own ack_wait
+        -- means the claim only goes stale if heartbeats actually stop
+        (a genuine crash), regardless of how long legitimate processing
+        (including semaphore wait, which has no upper bound) takes.
+        """
+        kv = await self._kv(KV_INFLIGHT)
+        for _ in range(3):
+            try:
+                entry = await kv.get(packet_id)
+                claim = json.loads(entry.value.decode())
+            except Exception:
+                return
+            if claim.get("status") != "in_progress":
+                return  # already marked done elsewhere -- nothing to refresh
+            claim["ts"] = time.time()
+            try:
+                await kv.update(packet_id, json.dumps(claim).encode(), last=entry.revision)
+                return
+            except Exception:
+                continue  # lost a race against another writer -- retry
+
     async def _mark_packet_done(self, packet_id: str) -> None:
         """Mark a claim as finished rather than deleting it. Deleting made
         a completed packet indistinguishable from "never claimed" -- any
@@ -412,6 +451,12 @@ class AgentShell(ABC):
                 await asyncio.sleep(90)
                 try:
                     await msg.in_progress()
+                    # Refresh the inflight claim's timestamp on the same
+                    # cadence -- otherwise its staleness clock is disconnected
+                    # from whether this holder is actually still alive. See
+                    # _refresh_packet_claim's docstring for the live incident
+                    # this fixes.
+                    await self._refresh_packet_claim(packet.id)
                     log.info("[%s] heartbeat sent for %s", self.agent_id, packet.id[:8])
                 except Exception as exc:
                     log.error("[%s] heartbeat FAILED for %s: %r", self.agent_id, packet.id[:8], exc)

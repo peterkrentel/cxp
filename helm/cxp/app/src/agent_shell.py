@@ -634,6 +634,14 @@ class AgentShell(ABC):
         async def _stream(client: httpx.AsyncClient) -> str:
             chunks: list[str] = []
             total_len = 0
+            # Publishes the actual text generated since the last update, not
+            # just whichever single token happened to cross the 30-char
+            # mark -- the old `total_len % 30 == 0` check only gated WHEN to
+            # publish, but then sent `token` alone (often a single
+            # character on this small/quantized model), making the live
+            # thinking-stream show meaningless fragments like "s", "g", "4"
+            # instead of readable progress.
+            last_published_len = 0
             async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
                 "model": OLLAMA_MODEL, "stream": True,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -647,9 +655,11 @@ class AgentShell(ABC):
                         if token:
                             chunks.append(token)
                             total_len += len(token)
-                            if total_len % 30 == 0:
+                            if total_len - last_published_len >= 30:
+                                new_text = "".join(chunks)[last_published_len:total_len]
+                                last_published_len = total_len
                                 await self._nc.publish(SUBJECT_THINKING,
-                                    json.dumps({"agent": self.agent_id, "text": token, "stream": True}).encode())
+                                    json.dumps({"agent": self.agent_id, "text": new_text, "stream": True}).encode())
                     except Exception:
                         continue
             return "".join(chunks)

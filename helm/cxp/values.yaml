@@ -141,7 +141,14 @@ agents:
     role: verifier
     model: qwen2.5:1.5b   # use cached model
   reflect:
-    replicas: 1
+    # Bumped from 1 -> 2 2026-08-18, same reasoning and same treatment as
+    # verifier's earlier bump: confirmed live it shares the identical
+    # structural bottleneck (single replica competing for the same shared
+    # main-instance Ollama concurrency ceiling with planner/executor/
+    # verifier/diagnostician), and its own prompts skew larger (rewriting
+    # a whole skill file, observed up to ~3500 chars vs verify's typical
+    # few hundred), likely making individual calls slower on average too.
+    replicas: 2
     role: reflect
     model: qwen2.5:1.5b   # use cached model
   dashboard:

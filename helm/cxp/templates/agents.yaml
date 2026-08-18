@@ -93,7 +93,15 @@ spec:
             - { name: PATH,           value: "/shared-bin:/usr/local/bin:/usr/bin:/bin" }
             {{- end }}
           resources:
-            requests: { cpu: 100m, memory: 128Mi }
+            # requests were 100m -- real observed usage all night was 1-2m
+            # per pod (these are lightweight asyncio processes; the LLM
+            # work happens in Ollama, not here). 100m x 9 agent pods (now
+            # that verifier has 2 replicas) was enough to tip CI's
+            # constrained runner over into "Insufficient cpu" and leave a
+            # pod permanently unschedulable, even though production (10
+            # real cores) had no such problem. 20m still leaves a healthy
+            # margin over actual usage.
+            requests: { cpu: 20m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }
           volumeMounts:
             - { name: app,    mountPath: /app }

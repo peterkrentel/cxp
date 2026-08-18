@@ -102,6 +102,51 @@ async def test_a_still_running_claim_is_not_treated_as_stale(agent, fake_kv):
     assert await agent._claim_packet(PACKET_ID) is False
 
 
+async def test_refreshed_claim_survives_past_the_old_stale_window(agent, fake_kv):
+    """Regression test for a real bug found live 2026-08-17: under heavy
+    Ollama-slot contention (made worse by adding a second verifier
+    replica), one verify call legitimately took 34 minutes -- almost all
+    of it waiting for a free slot before the LLM call even started --
+    blowing past INFLIGHT_STALE_SECONDS (960s) even though the holder
+    never crashed. A second delivery then reclaimed it as "abandoned" and
+    re-executed the whole task, producing a real duplicate with a
+    different (non-deterministic) verifier score. _refresh_packet_claim,
+    called on the same 90s cadence as the JetStream heartbeat, must keep
+    a genuinely-still-alive claim from ever looking stale, no matter how
+    long total processing (including unbounded semaphore wait) takes."""
+    agent._kv_cache[KV_INFLIGHT] = fake_kv
+    assert await agent._claim_packet(PACKET_ID) is True
+
+    # Simulate 3 heartbeat cycles' worth of elapsed time (well past
+    # INFLIGHT_STALE_SECONDS in total), refreshing after each one -- same
+    # as a real long-running holder would.
+    entry = await fake_kv.get(PACKET_ID)
+    claim = json.loads(entry.value.decode())
+    claim["ts"] = time.time() - INFLIGHT_STALE_SECONDS - 300
+    await fake_kv.update(PACKET_ID, json.dumps(claim).encode(), last=entry.revision)
+    await agent._refresh_packet_claim(PACKET_ID)
+
+    # A redelivery arriving right now must still be rejected -- the
+    # refresh just happened, so this claim is definitely not stale.
+    assert await agent._claim_packet(PACKET_ID) is False
+
+
+async def test_claim_without_refresh_is_still_reclaimable_after_a_real_crash(agent, fake_kv):
+    """The other half of the same fix: a holder that genuinely crashed
+    (heartbeats stop, no more refreshes) must still be reclaimable once
+    truly stale -- the refresh must not make abandoned claims immortal."""
+    agent._kv_cache[KV_INFLIGHT] = fake_kv
+    assert await agent._claim_packet(PACKET_ID) is True
+
+    entry = await fake_kv.get(PACKET_ID)
+    claim = json.loads(entry.value.decode())
+    claim["ts"] = time.time() - INFLIGHT_STALE_SECONDS - 10
+    await fake_kv.update(PACKET_ID, json.dumps(claim).encode(), last=entry.revision)
+    # No refresh call here -- simulating a crashed holder.
+
+    assert await agent._claim_packet(PACKET_ID) is True
+
+
 async def test_unreadable_existing_claim_fails_closed_not_open(agent, fake_kv, monkeypatch):
     """Regression test for a real bug found live 2026-08-17: a claim
     already exists (create() failed), but reading it to check staleness

@@ -16,15 +16,28 @@ twice:
    claimed" -- if ack() itself ever threw or silently failed to
    register, the release step never ran, and a later redelivery found a
    stale-looking claim and reclaimed it as an abandoned crash.
+3. Even after that (mark done up front, never delete), a duplicate still
+   landed: two verifier replicas both legitimately claimed the same
+   packet, one taking 34 minutes under real Ollama-slot contention --
+   almost all of it spent waiting for a free slot before the LLM call
+   even started. INFLIGHT_STALE_SECONDS (960s) was a fixed one-time
+   timestamp disconnected from whether the holder was still alive, so
+   the second delivery saw a "16-minute-old" claim and reclaimed it as an
+   abandoned crash even though the first was still actively working.
 
 The fix: mark the packet done immediately after _execute() returns
-(before publish/emit_status/ack), and never actually delete the claim --
-a "done" marker is protected from reclaim for DONE_CLAIM_RETENTION_SECONDS
-regardless of how the rest of the pipeline behaves afterward. These tests
-pin that down directly instead of relying on live observation again."""
+(before publish/emit_status/ack), never actually delete the claim (a
+"done" marker is protected from reclaim for DONE_CLAIM_RETENTION_SECONDS
+regardless of how the rest of the pipeline behaves afterward), and
+refresh a live claim's timestamp on the same 90s cadence as the
+JetStream heartbeat, so it only goes stale if heartbeats genuinely stop
+(a real crash), not just because total processing (including unbounded
+semaphore wait) took a long time. These tests pin all of this down
+directly instead of relying on live observation again."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from unittest.mock import AsyncMock
@@ -92,6 +105,41 @@ async def test_claim_stays_protected_after_handle_message_fully_completes(agent,
     await agent._handle_message(msg)
 
     assert await agent._claim_packet(packet.id) is False
+
+
+async def test_heartbeat_loop_actually_refreshes_the_claim(agent, fake_kv, monkeypatch):
+    """Integration-level regression test: _refresh_packet_claim existing
+    as a method isn't enough -- it has to actually be called from inside
+    handle()'s heartbeat loop, on every cycle, or a long-running task
+    (unbounded Ollama-slot wait plus the LLM call itself) is exactly as
+    vulnerable to the "looks abandoned, wasn't" bug as before. Spies on
+    the real heartbeat loop rather than calling _refresh_packet_claim
+    directly, so this would fail if the fix existed but wasn't wired in."""
+    _wire(agent, fake_kv, monkeypatch)
+    packet = CXPPacket(type=PacketType.CODE, capability="code", payload=Payload(goal="slow task"))
+    msg = FakeMsg(packet)
+
+    heartbeat_fired = asyncio.Event()
+
+    async def fast_sleep(seconds):
+        if not heartbeat_fired.is_set():
+            heartbeat_fired.set()
+            return
+        await asyncio.Future()  # park until the heartbeat task is cancelled
+
+    monkeypatch.setattr("src.agent_shell.asyncio.sleep", fast_sleep)
+    refresh_spy = AsyncMock(wraps=agent._refresh_packet_claim)
+    monkeypatch.setattr(agent, "_refresh_packet_claim", refresh_spy)
+
+    async def fake_execute(p):
+        await heartbeat_fired.wait()
+        return "done"
+
+    monkeypatch.setattr(agent, "_execute", fake_execute)
+
+    await agent._handle_message(msg)
+
+    refresh_spy.assert_awaited()
 
 
 async def test_packet_stays_marked_done_even_if_ack_itself_fails(agent, fake_kv, monkeypatch):

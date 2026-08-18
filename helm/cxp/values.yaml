@@ -129,7 +129,15 @@ agents:
     role: executor
     model: qwen2.5:1.5b   # use cached model
   verifier:
-    replicas: 1
+    # Bumped from 1 -> 2 2026-08-17: verify was the pipeline's real
+    # bottleneck under sustained load -- confirmed live via a direct
+    # backlog peek (30+ distinct real tasks queued, oldest 45+ minutes),
+    # while every other capability had already drained. Ollama's shared
+    # concurrency ceiling had real headroom (assessor's own instance was
+    # idle, node CPU at ~37%), so the constraint was "only one process
+    # pulling from verify's queue," not "not enough inference slots" --
+    # a second replica uses that already-idle capacity directly.
+    replicas: 2
     role: verifier
     model: qwen2.5:1.5b   # use cached model
   reflect:

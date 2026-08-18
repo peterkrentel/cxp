@@ -79,8 +79,17 @@ spec:
 
                       # Continue the existing bot branch if one's already
                       # out there; otherwise start a fresh one off main.
+                      # Checks out FETCH_HEAD, not origin/bot/test-results --
+                      # the initial --depth=1 clone restricts the remote's
+                      # fetch refspec to just main, so fetching a different
+                      # branch afterward pulls the right commit but never
+                      # creates an origin/bot/test-results tracking ref (only
+                      # the transient FETCH_HEAD). Checking out a ref that
+                      # was never created was why every push has failed with
+                      # "not a commit" all along -- results were silently
+                      # lost on every run since this branch was introduced.
                       if git fetch -q origin bot/test-results 2>/dev/null; then
-                        git checkout -q -B bot/test-results origin/bot/test-results
+                        git checkout -q -B bot/test-results FETCH_HEAD
                       else
                         git checkout -q -b bot/test-results
                       fi

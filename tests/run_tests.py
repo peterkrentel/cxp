@@ -176,18 +176,35 @@ def check_regression(baseline: list[float], this_run: list[float]) -> str | None
     return None
 
 
-def validate_python(code: str) -> tuple[bool, list[str]]:
+def validate_python(code: str, require_type_hints: bool = False) -> tuple[bool, list[str]]:
     code = _strip_markdown(code)
     issues = []
     try:
         compile(code, "<string>", "exec")
     except SyntaxError as e:
-        issues.append(f"SyntaxError: {e}")
-        return False, issues
+        return False, [f"SyntaxError: {e}"]
     if "def " not in code:
         issues.append("No function definition found")
-    if ":" not in code:
-        issues.append("No type hints found")
+    if require_type_hints:
+        import ast
+        parsed = ast.parse(code)
+        funcs = [n for n in ast.walk(parsed) if isinstance(n, ast.FunctionDef)]
+        annotated = [f for f in funcs if f.returns or any(a.annotation for a in f.args.args)]
+        if not funcs or not annotated:
+            issues.append("No real parameter/return type hints found (ast-checked, not just ':' in source)")
+    return len(issues) == 0, issues
+
+
+def validate_error_handling(code: str, required_exceptions: list[str]) -> tuple[bool, list[str]]:
+    code = _strip_markdown(code)
+    issues = []
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    for exc_name in required_exceptions:
+        if exc_name not in code:
+            issues.append(f"Never mentions {exc_name} -- not actually handled")
     return len(issues) == 0, issues
 
 
@@ -200,9 +217,51 @@ def validate_yaml(text: str) -> tuple[bool, list[str]]:
         return False, [f"Invalid YAML: {e}"]
 
 
-def validate_infra_yaml(text: str) -> tuple[bool, list[str]]:
+def validate_k8s_deployment(text: str, require_resources: bool = True) -> tuple[bool, list[str]]:
+    try:
+        import yaml
+        doc = yaml.safe_load(_strip_markdown(text))
+    except Exception as e:
+        return False, [f"Invalid YAML: {e}"]
+    if not isinstance(doc, dict):
+        return False, ["YAML did not parse to a mapping"]
+    issues = []
+    if doc.get("kind") != "Deployment":
+        issues.append(f"kind is {doc.get('kind')!r}, expected 'Deployment'")
+    if require_resources:
+        flat = str(doc).lower()
+        if "resources" not in flat or "limits" not in flat:
+            issues.append("No resources.limits found anywhere in the manifest")
+    return len(issues) == 0, issues
+
+
+def validate_security(code: str) -> tuple[bool, list[str]]:
+    """Independent check, not dependent on the verifier's own wording:
+    does user-controlled input reach a network/filesystem call without
+    any visible validation step in between?"""
+    code = _strip_markdown(code)
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    issues = []
+    has_sink = any(s in code for s in ("requests.get(", "requests.post(", "open(", "urlopen("))
+    has_validation = any(s in code for s in (
+        "urlparse", "scheme", "raise ValueError", "startswith(", "in allowed", "sanitiz",
+    ))
+    if has_sink and not has_validation:
+        issues.append("Passes input to a network/file call with no visible validation step")
+    return len(issues) == 0, issues
+
+
+def validate_infra_yaml(
+    text: str,
+    required_keys: tuple[str, ...] = ("persistence", "auth", "sentinel", "resources"),
+) -> tuple[bool, list[str]]:
     """STRUCTURED_OUTPUT checks *valid* YAML; this checks *specific keys*
-    exist, matching tests/examples.md's INFRA_AS_CODE expectations."""
+    exist, matching tests/examples.md's INFRA_AS_CODE expectations.
+    Parameterized so each tier can require a different key set without
+    running the full check and string-filtering issues out after the fact."""
     try:
         import yaml
         doc = yaml.safe_load(_strip_markdown(text))
@@ -211,28 +270,56 @@ def validate_infra_yaml(text: str) -> tuple[bool, list[str]]:
     if not isinstance(doc, dict):
         return False, ["YAML did not parse to a mapping"]
     flat = str(doc).lower()
-    issues = [f"Missing '{key}' config" for key in ("persistence", "auth", "sentinel", "resources") if key not in flat]
+    issues = [f"Missing '{key}' config" for key in required_keys if key not in flat]
     return len(issues) == 0, issues
 
 
 def validate_always(_artifact: str) -> tuple[bool, list[str]]:
     """For tests whose real check isn't the artifact text itself — see
-    min_subtasks (DECOMPOSITION) and required_issue_keywords (SECURITY_AWARENESS)
-    in evaluate() below."""
+    required_issue_keywords (SECURITY_AWARENESS) in evaluate() below."""
     return True, []
 
 
-def validate_has_tests(code: str) -> tuple[bool, list[str]]:
+def validate_has_tests(code: str, min_asserts: int = 2) -> tuple[bool, list[str]]:
     """TESTING: does the artifact include actual test code, not just the
-    function it's meant to test?"""
+    function it's meant to test? min_asserts lets harder tiers demand a
+    wider test surface instead of just a goal-text claim nothing checks."""
     code = _strip_markdown(code)
     issues = []
     try:
         compile(code, "<string>", "exec")
     except SyntaxError as e:
         return False, [f"SyntaxError: {e}"]
-    if "def test_" not in code and code.count("assert ") < 2:
-        issues.append("No dedicated test function or assertions found")
+    if "def test_" not in code and code.count("assert ") < min_asserts:
+        issues.append(f"No dedicated test function and fewer than {min_asserts} assertions found")
+    return len(issues) == 0, issues
+
+
+def validate_decomposition(text: str, required_pieces: tuple[str, ...]) -> tuple[bool, list[str]]:
+    """DECOMPOSITION: checks the single returned artifact for evidence of
+    each distinct piece the goal asked for, matched case-insensitively.
+    Deliberately NOT a sub-packet count -- confirmed via real packet history
+    that this planner always spawns exactly one code-type packet regardless
+    of goal complexity, so counting packets can never distinguish an easy
+    goal from a hard one. This checks the artifact's own content instead."""
+    lowered = text.lower()
+    issues = [f"No evidence of {piece!r} in the artifact" for piece in required_pieces if piece.lower() not in lowered]
+    return len(issues) == 0, issues
+
+
+def validate_readme(text: str) -> tuple[bool, list[str]]:
+    """DOCUMENTATION (Tier 2): checks a README's actual sections. Deliberately
+    NOT validate_has_docstring -- that checks for a triple-quoted Python
+    docstring, which a real README will never contain, so reusing it here
+    would fail every legitimate submission."""
+    lowered = text.lower()
+    issues = []
+    if "install" not in lowered:
+        issues.append("No installation section found")
+    if "usage" not in lowered and "example" not in lowered:
+        issues.append("No usage/example section found")
+    if "api" not in lowered and "reference" not in lowered:
+        issues.append("No API reference section found")
     return len(issues) == 0, issues
 
 
@@ -270,33 +357,41 @@ TESTS = [
     {
         "label": "CODE_GENERATION",
         "goal": "write a Python function that adds two numbers with type hints and docstring",
-        "validator": validate_python,
+        "validator": lambda code: validate_python(code, require_type_hints=True),
         "threshold": 0.75,
     },
     {
         "label": "ERROR_HANDLING",
         "goal": "write a Python function that reads a JSON file and returns a dict, handling FileNotFoundError and JSONDecodeError",
-        "validator": validate_python,
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError", "JSONDecodeError"]),
         "threshold": 0.75,
     },
     {
         "label": "STRUCTURED_OUTPUT",
         "goal": "generate a Kubernetes Deployment manifest for a Node.js API with resource limits",
-        "validator": validate_yaml,
+        "validator": validate_k8s_deployment,
         "threshold": 0.70,
     },
     {
         "label": "DECOMPOSITION",
         "goal": "scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README",
-        "validator": validate_always,
-        "threshold": 0.0,   # score isn't the point — sub-task count is
-        "min_subtasks": 3,  # examples.md says 5+; relaxed for the small local planner model
+        # No "min_subtasks" any more -- confirmed via real packet history that
+        # code_count never varies with goal complexity (this planner always
+        # spawns exactly one code-type packet), so it never actually measured
+        # this goal's difficulty. Checks the one returned artifact for
+        # evidence of each named component instead.
+        "validator": lambda text: validate_decomposition(
+            text, required_pieces=("fastapi", "postgres", "docker-compose", "test", "readme")
+        ),
+        "threshold": 0.0,
     },
     {
         "label": "SECURITY_AWARENESS",
         "goal": "generate a Python web scraper that downloads URLs from user input and saves to disk",
-        "validator": validate_always,
+        "validator": validate_security,
         "threshold": 0.0,   # pass = verifier correctly flagged a risk, not a high score
+        # required_issue_keywords stays too -- this becomes a second, independent
+        # signal on top of the new real check, not a replacement for it.
         "required_issue_keywords": ["url", "valid", "path", "travers", "rate limit", "sanitiz"],
     },
     {
@@ -328,12 +423,6 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     output = result.get("output", "")
     print(f"  [{label}] score={score:.2f}  {len(output)} chars")
     valid, issues = test["validator"](output)
-
-    if "min_subtasks" in test:
-        code_count = result.get("code_count", 0)
-        if code_count < test["min_subtasks"]:
-            valid = False
-            issues = issues + [f"Only {code_count} sub-task(s) spawned, expected >= {test['min_subtasks']}"]
 
     if "required_issue_keywords" in test:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()

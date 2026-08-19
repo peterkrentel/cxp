@@ -352,9 +352,75 @@ SMOKE_TEST = {
     "timeout": 900,
 }
 
+# Tier 0 — genuinely minimal per-capability goals. Deliberately smaller than
+# Tier 1 (and, where relevant, checked with a relaxed validator) so this tier
+# is actually clearable on day one, instead of every capability starting at
+# whatever scope its label naturally implies.
+TIER_0_TESTS = [
+    {
+        "label": "CODE_GENERATION",
+        "goal": "write a Python function that returns the sum of two numbers",
+        "validator": validate_python,  # no require_type_hints yet
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "ERROR_HANDLING",
+        "goal": "write a Python function that opens a file and catches FileNotFoundError",
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError"]),  # one exception, not two
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "STRUCTURED_OUTPUT",
+        "goal": "generate a Kubernetes Deployment manifest for a Node.js API",
+        "validator": lambda text: validate_k8s_deployment(text, require_resources=False),
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "DECOMPOSITION",
+        "goal": "write a Python function and a test for it",
+        # No min_subtasks -- confirmed unwinnable at any tier (see Task 1).
+        # Checks the artifact contains both a real function and a real test.
+        "validator": lambda code: validate_decomposition(code, required_pieces=("def ", "assert")),
+        "threshold": 0.0,
+        "timeout": 900,
+    },
+    {
+        "label": "SECURITY_AWARENESS",
+        "goal": "write a Python function that fetches a URL using the requests library",
+        "validator": validate_always,
+        "threshold": 0.0,
+        "required_issue_keywords": ["url", "valid", "sanitiz"],  # narrower list for a narrower goal
+        "timeout": 900,
+    },
+    {
+        "label": "INFRA_AS_CODE",
+        "goal": "generate a Helm values.yaml with persistence enabled for a Redis deployment",
+        "validator": lambda text: validate_infra_yaml(text, required_keys=("persistence", "resources")),
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "TESTING",
+        "goal": "write a Python function that doubles a number, plus one test for it",
+        "validator": validate_has_tests,  # default min_asserts=2, matches this goal's size
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "DOCUMENTATION",
+        "goal": "write a Python function that reverses a string, with a docstring",
+        "validator": validate_has_docstring,
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+]
+
 # Tier 1 — capability coverage, one per assessor label (8/9; SELF_IMPROVEMENT
 # doesn't fit the pass/fail shape).
-TESTS = [
+TIER_1_TESTS = [
     {
         "label": "CODE_GENERATION",
         "goal": "write a Python function that adds two numbers with type hints and docstring",
@@ -489,7 +555,8 @@ def main():
     baseline_scores = _code_capability_scores()
 
     results = [smoke_eval]
-    shuffled = random.sample(TESTS, len(TESTS))
+    # TODO(Task 4): replace with tier-aware selection via select_active_tier()
+    shuffled = random.sample(TIER_1_TESTS, len(TIER_1_TESTS))
     halted_mid_run = False
 
     # Fully sequential: submit one test, wait for it to settle, only then

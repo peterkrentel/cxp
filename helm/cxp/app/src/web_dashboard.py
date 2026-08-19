@@ -63,6 +63,21 @@ async def get_halt() -> dict | None:
         return None
 
 
+async def get_tier_status() -> dict | None:
+    """Per-tier streak progress and the currently active tier, published to
+    KV_STATE by tests/check_plateau.py (the only component with git access
+    to the tests/results history this is computed from) -- this pod has no
+    git credentials of its own to read that history directly."""
+    if not _nc:
+        return None
+    try:
+        kv = await _kv(KV_STATE)
+        entry = await kv.get("tier-status")
+        return json.loads(entry.value.decode())
+    except Exception:
+        return None
+
+
 # Every question asked by hand tonight while chasing a live duplicate-
 # processing bug -- "is anything actually processing right now", "did that
 # fix actually stop the duplicates" -- required a kubectl/nats CLI round
@@ -325,6 +340,10 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
     <div class="panel-title">Queue Health — is anything stuck?</div>
     <table><thead><tr><th>Cap</th><th>Pending</th><th>In-flight</th><th>Redelivered</th></tr></thead><tbody id="health"></tbody></table>
   </div>
+  <div class="panel">
+    <div class="panel-title">Tier Progress — capability difficulty ladder</div>
+    <table><thead><tr><th>Tier</th><th>Streak</th><th>Active</th></tr></thead><tbody id="tier-rows"></tbody></table>
+  </div>
 </div>
 
 <div class="row" style="height:200px" id="mid-row">
@@ -439,6 +458,17 @@ async function refresh() {
     dupBanner.style.display = 'none';
   }
 
+  // Published by tests/check_plateau.py after each hourly CronJob run (the
+  // only component with git access to the tests/results history this is
+  // computed from) -- absent until the first run after this feature deploys.
+  const ts = data.tier_status;
+  document.getElementById('tier-rows').innerHTML = !ts
+    ? `<tr><td class="d" colspan="3">no data yet — waiting on next scheduled run</td></tr>`
+    : Object.keys(ts.streaks).map(tier => {
+        const active = Number(tier) === ts.active_tier;
+        return `<tr><td class="c">Tier ${tier}</td><td>${ts.streaks[tier]} / ${ts.streak_target}</td><td class="${active ? 'g' : 'd'}">${active ? '● active' : ''}</td></tr>`;
+      }).join('');
+
   // Packets table only ever holds FINISHED packets (on_result fires on
   // done/error) — nothing in-flight ever appears there on its own. Show
   // what's currently active by synthesizing a row per agent that's
@@ -540,4 +570,5 @@ async def get_state():
         "halt": await get_halt(),
         "stream_health": await get_stream_health(),
         "duplicate_packets": get_duplicate_packets(),
+        "tier_status": await get_tier_status(),
     })

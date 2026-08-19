@@ -9,6 +9,15 @@ import sys
 import time
 import urllib.request
 
+# The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
+# which puts only this script's OWN directory on sys.path, not its parent -- so
+# select_active_tier()'s `from tests.check_plateau import ...` would fail to
+# resolve `tests` as a package. Confirmed live: found while packaging
+# check_plateau.py itself into the deployed app for the same reason. Fixing at
+# the source rather than assuming the caller's invocation style, so this works
+# regardless (same fix already applied in check_plateau.py).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 API = os.environ.get("CXP_WEB_API", "http://cxp-web:8080")
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")  # same PVC agents write to
 

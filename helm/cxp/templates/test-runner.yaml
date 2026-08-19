@@ -101,7 +101,26 @@ spec:
                       # Has the fixed suite plateaued? Only this clone (not
                       # the CronJob pod itself) has the full git-tracked run
                       # history to check against.
-                      python3 tests/check_plateau.py tests/results || true
+                      #
+                      # Runs /app/tests/check_plateau.py (the ConfigMap-
+                      # assembled copy, always matching main), NOT
+                      # tests/check_plateau.py from this checkout. The
+                      # checkout above just switched HEAD to bot/test-results,
+                      # which overwrites the whole working tree -- including
+                      # check_plateau.py itself -- with whatever was last
+                      # committed there. bot/test-results only ever receives
+                      # results-JSON commits, never a merge from main, so its
+                      # copy of this script silently drifts arbitrarily far
+                      # behind main. Found live 2026-08-19: the entire tiered
+                      # promotion rewrite (#38) never actually ran here --
+                      # this step kept printing the pre-tiered single-streak
+                      # output on every run since, despite main having moved
+                      # on. check_plateau.py only reads local JSON files, so
+                      # it doesn't need to BE on the branch being analyzed --
+                      # pointing at the current /app copy decouples "which
+                      # code runs" from "which branch happens to be checked
+                      # out," which is the actual fix, not a version pin.
+                      python3 /app/tests/check_plateau.py tests/results || true
 
                       git add tests/results/
                       if git diff --cached --quiet; then

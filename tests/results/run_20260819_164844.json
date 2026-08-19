@@ -1,0 +1,76 @@
+{
+  "timestamp": "20260819_164844",
+  "tier": 0,
+  "passed": 2,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.8,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "da3b9552"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.8,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "c2599dce"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.5,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 11, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "68b438bd"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: apps/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 32, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "d9246818"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.9,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "59db0d3a"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "322efec7"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    }
+  ]
+}

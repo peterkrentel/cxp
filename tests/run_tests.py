@@ -362,7 +362,16 @@ SMOKE_TEST = {
     "goal": "write a Python one-liner that prints 'hello world'",
     "validator": validate_smoke,
     "threshold": 0.3,
-    "timeout": 900,
+    # 900s was sized for one hop's P90 latency (438s) x ~3 hops -- but SMOKE
+    # gets no retry (one shot, unlike every capability test below), and real
+    # data confirms 900s isn't enough under real conditions: both post-900s-
+    # fix runs (2026-08-19, 13:20 and 14:13 UTC) still show SMOKE timing out,
+    # even though individual Ollama calls in that window topped out around
+    # 5m12s -- the ceiling with only 2 concurrent slots is queueing across 3
+    # sequential hops, not any single call being unreasonably slow. 1800s
+    # gives real margin for that queueing without touching Ollama's
+    # concurrency architecture at all.
+    "timeout": 1800,
 }
 
 # Tier 0 — genuinely minimal per-capability goals. Deliberately smaller than
@@ -671,13 +680,13 @@ def main():
     # SMOKE: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
-    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 900s),
-    # derived from measured pipeline latency (120s median / 438s P90 across
-    # 75 real hop-to-hop transitions) rather than a guessed flat value. Smoke
-    # is always the FIRST request of every run, so it's the one most likely
-    # to catch Ollama cold (model unloaded since the last cycle) — a short
-    # timeout paired with the worst timing made it the most fragile test,
-    # not the most forgiving one, which is backwards for a health check.
+    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 1800s --
+    # see the constant's own comment for why this is larger than the
+    # capability tests' 900s). Smoke is always the FIRST request of every
+    # run, so it's the one most likely to catch Ollama cold (model unloaded
+    # since the last cycle) and gets no retry — a short timeout paired with
+    # the worst timing made it the most fragile test, not the most
+    # forgiving one, which is backwards for a health check.
     print("\nRunning smoke test (pipeline health check)...")
     smoke_task_id = submit_task(SMOKE_TEST["goal"])
     smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=SMOKE_TEST["timeout"]) if smoke_task_id else {}

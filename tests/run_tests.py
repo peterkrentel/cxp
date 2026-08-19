@@ -349,6 +349,7 @@ SMOKE_TEST = {
     "goal": "write a Python one-liner that prints 'hello world'",
     "validator": validate_smoke,
     "threshold": 0.3,
+    "timeout": 900,
 }
 
 # Tier 1 — capability coverage, one per assessor label (8/9; SELF_IMPROVEMENT
@@ -359,18 +360,21 @@ TESTS = [
         "goal": "write a Python function that adds two numbers with type hints and docstring",
         "validator": lambda code: validate_python(code, require_type_hints=True),
         "threshold": 0.75,
+        "timeout": 900,
     },
     {
         "label": "ERROR_HANDLING",
         "goal": "write a Python function that reads a JSON file and returns a dict, handling FileNotFoundError and JSONDecodeError",
         "validator": lambda code: validate_error_handling(code, ["FileNotFoundError", "JSONDecodeError"]),
         "threshold": 0.75,
+        "timeout": 900,
     },
     {
         "label": "STRUCTURED_OUTPUT",
         "goal": "generate a Kubernetes Deployment manifest for a Node.js API with resource limits",
         "validator": validate_k8s_deployment,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "DECOMPOSITION",
@@ -384,6 +388,7 @@ TESTS = [
             text, required_pieces=("fastapi", "postgres", "docker-compose", "test", "readme")
         ),
         "threshold": 0.0,
+        "timeout": 900,
     },
     {
         "label": "SECURITY_AWARENESS",
@@ -393,24 +398,28 @@ TESTS = [
         # required_issue_keywords stays too -- this becomes a second, independent
         # signal on top of the new real check, not a replacement for it.
         "required_issue_keywords": ["url", "valid", "path", "travers", "rate limit", "sanitiz"],
+        "timeout": 900,
     },
     {
         "label": "INFRA_AS_CODE",
         "goal": "generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits",
         "validator": validate_infra_yaml,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "TESTING",
         "goal": "write a Python function that calculates the factorial of a number, plus unit tests covering zero, one, and a typical positive input",
         "validator": validate_has_tests,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "DOCUMENTATION",
         "goal": "write a Python function for binary search over a sorted list, with a comprehensive docstring covering parameters, return value, and an example usage",
         "validator": validate_has_docstring,
         "threshold": 0.70,
+        "timeout": 900,
     },
 ]
 
@@ -458,14 +467,16 @@ def main():
     # Tier 0: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
-    # Timeout is 240s, not the original 120s: smoke is always the FIRST
-    # request of every run, so it's the one most likely to catch Ollama
-    # cold (model unloaded since the last cycle) — a short timeout paired
-    # with the worst timing made it the most fragile test, not the most
-    # forgiving one, which is backwards for a health check.
+    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 900s),
+    # derived from measured pipeline latency (120s median / 438s P90 across
+    # 75 real hop-to-hop transitions) rather than a guessed flat value. Smoke
+    # is always the FIRST request of every run, so it's the one most likely
+    # to catch Ollama cold (model unloaded since the last cycle) — a short
+    # timeout paired with the worst timing made it the most fragile test,
+    # not the most forgiving one, which is backwards for a health check.
     print("\nRunning smoke test (pipeline health check)...")
     smoke_task_id = submit_task(SMOKE_TEST["goal"])
-    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=240) if smoke_task_id else {}
+    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=SMOKE_TEST["timeout"]) if smoke_task_id else {}
     smoke_eval = evaluate(SMOKE_TEST, smoke_result.get(smoke_task_id), attempt=1)
     if smoke_eval["status"] != "PASS":
         print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "
@@ -509,7 +520,7 @@ def main():
             continue
         task_map[task_id] = test
         print(f"  ✓ [{test['label']}] submitted: {task_id} — waiting for it to finish...")
-        one_result = wait_for_results({task_id: test}, timeout=480)
+        one_result = wait_for_results({task_id: test}, timeout=test["timeout"])
         if task_id in one_result:
             result_map.update(one_result)
             print(f"  … [{test['label']}] settled")
@@ -539,7 +550,7 @@ def main():
             retry_id = submit_task(test["goal"])
             if retry_id:
                 print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")
-                retry_result = wait_for_results({retry_id: test}, timeout=480)
+                retry_result = wait_for_results({retry_id: test}, timeout=test["timeout"])
                 results.append(evaluate(test, retry_result.get(retry_id), attempt=2))
             else:
                 # retry submission itself failed — don't silently drop the

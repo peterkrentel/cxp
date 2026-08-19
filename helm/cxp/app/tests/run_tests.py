@@ -4,9 +4,19 @@
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 import urllib.request
+
+# The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
+# which puts only this script's OWN directory on sys.path, not its parent -- so
+# select_active_tier()'s `from tests.check_plateau import ...` would fail to
+# resolve `tests` as a package. Confirmed live: found while packaging
+# check_plateau.py itself into the deployed app for the same reason. Fixing at
+# the source rather than assuming the caller's invocation style, so this works
+# regardless (same fix already applied in check_plateau.py).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 API = os.environ.get("CXP_WEB_API", "http://cxp-web:8080")
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")  # same PVC agents write to
@@ -176,18 +186,35 @@ def check_regression(baseline: list[float], this_run: list[float]) -> str | None
     return None
 
 
-def validate_python(code: str) -> tuple[bool, list[str]]:
+def validate_python(code: str, require_type_hints: bool = False) -> tuple[bool, list[str]]:
     code = _strip_markdown(code)
     issues = []
     try:
         compile(code, "<string>", "exec")
     except SyntaxError as e:
-        issues.append(f"SyntaxError: {e}")
-        return False, issues
+        return False, [f"SyntaxError: {e}"]
     if "def " not in code:
         issues.append("No function definition found")
-    if ":" not in code:
-        issues.append("No type hints found")
+    if require_type_hints:
+        import ast
+        parsed = ast.parse(code)
+        funcs = [n for n in ast.walk(parsed) if isinstance(n, ast.FunctionDef)]
+        annotated = [f for f in funcs if f.returns or any(a.annotation for a in f.args.args)]
+        if not funcs or not annotated:
+            issues.append("No real parameter/return type hints found (ast-checked, not just ':' in source)")
+    return len(issues) == 0, issues
+
+
+def validate_error_handling(code: str, required_exceptions: list[str]) -> tuple[bool, list[str]]:
+    code = _strip_markdown(code)
+    issues = []
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    for exc_name in required_exceptions:
+        if exc_name not in code:
+            issues.append(f"Never mentions {exc_name} -- not actually handled")
     return len(issues) == 0, issues
 
 
@@ -200,9 +227,51 @@ def validate_yaml(text: str) -> tuple[bool, list[str]]:
         return False, [f"Invalid YAML: {e}"]
 
 
-def validate_infra_yaml(text: str) -> tuple[bool, list[str]]:
+def validate_k8s_deployment(text: str, require_resources: bool = True) -> tuple[bool, list[str]]:
+    try:
+        import yaml
+        doc = yaml.safe_load(_strip_markdown(text))
+    except Exception as e:
+        return False, [f"Invalid YAML: {e}"]
+    if not isinstance(doc, dict):
+        return False, ["YAML did not parse to a mapping"]
+    issues = []
+    if doc.get("kind") != "Deployment":
+        issues.append(f"kind is {doc.get('kind')!r}, expected 'Deployment'")
+    if require_resources:
+        flat = str(doc).lower()
+        if "resources" not in flat or "limits" not in flat:
+            issues.append("No resources.limits found anywhere in the manifest")
+    return len(issues) == 0, issues
+
+
+def validate_security(code: str) -> tuple[bool, list[str]]:
+    """Independent check, not dependent on the verifier's own wording:
+    does user-controlled input reach a network/filesystem call without
+    any visible validation step in between?"""
+    code = _strip_markdown(code)
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError as e:
+        return False, [f"SyntaxError: {e}"]
+    issues = []
+    has_sink = any(s in code for s in ("requests.get(", "requests.post(", "open(", "urlopen("))
+    has_validation = any(s in code for s in (
+        "urlparse", "scheme", "raise ValueError", "startswith(", "in allowed", "sanitiz",
+    ))
+    if has_sink and not has_validation:
+        issues.append("Passes input to a network/file call with no visible validation step")
+    return len(issues) == 0, issues
+
+
+def validate_infra_yaml(
+    text: str,
+    required_keys: tuple[str, ...] = ("persistence", "auth", "sentinel", "resources"),
+) -> tuple[bool, list[str]]:
     """STRUCTURED_OUTPUT checks *valid* YAML; this checks *specific keys*
-    exist, matching tests/examples.md's INFRA_AS_CODE expectations."""
+    exist, matching tests/examples.md's INFRA_AS_CODE expectations.
+    Parameterized so each tier can require a different key set without
+    running the full check and string-filtering issues out after the fact."""
     try:
         import yaml
         doc = yaml.safe_load(_strip_markdown(text))
@@ -211,28 +280,56 @@ def validate_infra_yaml(text: str) -> tuple[bool, list[str]]:
     if not isinstance(doc, dict):
         return False, ["YAML did not parse to a mapping"]
     flat = str(doc).lower()
-    issues = [f"Missing '{key}' config" for key in ("persistence", "auth", "sentinel", "resources") if key not in flat]
+    issues = [f"Missing '{key}' config" for key in required_keys if key not in flat]
     return len(issues) == 0, issues
 
 
 def validate_always(_artifact: str) -> tuple[bool, list[str]]:
     """For tests whose real check isn't the artifact text itself — see
-    min_subtasks (DECOMPOSITION) and required_issue_keywords (SECURITY_AWARENESS)
-    in evaluate() below."""
+    required_issue_keywords (SECURITY_AWARENESS) in evaluate() below."""
     return True, []
 
 
-def validate_has_tests(code: str) -> tuple[bool, list[str]]:
+def validate_has_tests(code: str, min_asserts: int = 2) -> tuple[bool, list[str]]:
     """TESTING: does the artifact include actual test code, not just the
-    function it's meant to test?"""
+    function it's meant to test? min_asserts lets harder tiers demand a
+    wider test surface instead of just a goal-text claim nothing checks."""
     code = _strip_markdown(code)
     issues = []
     try:
         compile(code, "<string>", "exec")
     except SyntaxError as e:
         return False, [f"SyntaxError: {e}"]
-    if "def test_" not in code and code.count("assert ") < 2:
-        issues.append("No dedicated test function or assertions found")
+    if "def test_" not in code and code.count("assert ") < min_asserts:
+        issues.append(f"No dedicated test function and fewer than {min_asserts} assertions found")
+    return len(issues) == 0, issues
+
+
+def validate_decomposition(text: str, required_pieces: tuple[str, ...]) -> tuple[bool, list[str]]:
+    """DECOMPOSITION: checks the single returned artifact for evidence of
+    each distinct piece the goal asked for, matched case-insensitively.
+    Deliberately NOT a sub-packet count -- confirmed via real packet history
+    that this planner always spawns exactly one code-type packet regardless
+    of goal complexity, so counting packets can never distinguish an easy
+    goal from a hard one. This checks the artifact's own content instead."""
+    lowered = text.lower()
+    issues = [f"No evidence of {piece!r} in the artifact" for piece in required_pieces if piece.lower() not in lowered]
+    return len(issues) == 0, issues
+
+
+def validate_readme(text: str) -> tuple[bool, list[str]]:
+    """DOCUMENTATION (Tier 2): checks a README's actual sections. Deliberately
+    NOT validate_has_docstring -- that checks for a triple-quoted Python
+    docstring, which a real README will never contain, so reusing it here
+    would fail every legitimate submission."""
+    lowered = text.lower()
+    issues = []
+    if "install" not in lowered:
+        issues.append("No installation section found")
+    if "usage" not in lowered and "example" not in lowered:
+        issues.append("No usage/example section found")
+    if "api" not in lowered and "reference" not in lowered:
+        issues.append("No API reference section found")
     return len(issues) == 0, issues
 
 
@@ -254,70 +351,278 @@ def validate_has_docstring(code: str) -> tuple[bool, list[str]]:
     return len(issues) == 0, issues
 
 
-# Tier 0 — pipeline health check, always run first, never shuffled with the
-# rest. A failure here means "the swarm is broken," a distinct and more
-# urgent signal than "the swarm is bad at capability X."
+# SMOKE is a pipeline health check, always run first, never shuffled with the
+# rest, and run unconditionally regardless of which difficulty tier (below)
+# is active. A failure here means "the swarm is broken," a distinct and more
+# urgent signal than "the swarm is bad at capability X." Not to be confused
+# with TIER_0_TESTS -- "tier" here would mean "runs first," an unrelated,
+# pre-existing use of the word.
 SMOKE_TEST = {
     "label": "SMOKE",
     "goal": "write a Python one-liner that prints 'hello world'",
     "validator": validate_smoke,
     "threshold": 0.3,
+    "timeout": 900,
 }
+
+# Tier 0 — genuinely minimal per-capability goals. Deliberately smaller than
+# Tier 1 (and, where relevant, checked with a relaxed validator) so this tier
+# is actually clearable on day one, instead of every capability starting at
+# whatever scope its label naturally implies.
+TIER_0_TESTS = [
+    {
+        "label": "CODE_GENERATION",
+        "goal": "write a Python function that returns the sum of two numbers",
+        "validator": validate_python,  # no require_type_hints yet
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "ERROR_HANDLING",
+        "goal": "write a Python function that opens a file and catches FileNotFoundError",
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError"]),  # one exception, not two
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "STRUCTURED_OUTPUT",
+        "goal": "generate a Kubernetes Deployment manifest for a Node.js API",
+        "validator": lambda text: validate_k8s_deployment(text, require_resources=False),
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "DECOMPOSITION",
+        "goal": "write a Python function and a test for it",
+        # No min_subtasks -- confirmed unwinnable at any tier (see Task 1).
+        # Checks the artifact contains both a real function and a real test.
+        "validator": lambda code: validate_decomposition(code, required_pieces=("def ", "assert")),
+        "threshold": 0.0,
+        "timeout": 900,
+    },
+    {
+        "label": "SECURITY_AWARENESS",
+        "goal": "write a Python function that fetches a URL using the requests library",
+        "validator": validate_always,
+        "threshold": 0.0,
+        "required_issue_keywords": ["url", "valid", "sanitiz"],  # narrower list for a narrower goal
+        "timeout": 900,
+    },
+    {
+        "label": "INFRA_AS_CODE",
+        "goal": "generate a Helm values.yaml with persistence enabled for a Redis deployment",
+        "validator": lambda text: validate_infra_yaml(text, required_keys=("persistence", "resources")),
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "TESTING",
+        "goal": "write a Python function that doubles a number, plus one test for it",
+        "validator": validate_has_tests,  # default min_asserts=2, matches this goal's size
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+    {
+        "label": "DOCUMENTATION",
+        "goal": "write a Python function that reverses a string, with a docstring",
+        "validator": validate_has_docstring,
+        "threshold": 0.6,
+        "timeout": 900,
+    },
+]
 
 # Tier 1 — capability coverage, one per assessor label (8/9; SELF_IMPROVEMENT
 # doesn't fit the pass/fail shape).
-TESTS = [
+TIER_1_TESTS = [
     {
         "label": "CODE_GENERATION",
         "goal": "write a Python function that adds two numbers with type hints and docstring",
-        "validator": validate_python,
+        "validator": lambda code: validate_python(code, require_type_hints=True),
         "threshold": 0.75,
+        "timeout": 900,
     },
     {
         "label": "ERROR_HANDLING",
         "goal": "write a Python function that reads a JSON file and returns a dict, handling FileNotFoundError and JSONDecodeError",
-        "validator": validate_python,
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError", "JSONDecodeError"]),
         "threshold": 0.75,
+        "timeout": 900,
     },
     {
         "label": "STRUCTURED_OUTPUT",
         "goal": "generate a Kubernetes Deployment manifest for a Node.js API with resource limits",
-        "validator": validate_yaml,
+        "validator": validate_k8s_deployment,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "DECOMPOSITION",
         "goal": "scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README",
-        "validator": validate_always,
-        "threshold": 0.0,   # score isn't the point — sub-task count is
-        "min_subtasks": 3,  # examples.md says 5+; relaxed for the small local planner model
+        # No "min_subtasks" any more -- confirmed via real packet history that
+        # code_count never varies with goal complexity (this planner always
+        # spawns exactly one code-type packet), so it never actually measured
+        # this goal's difficulty. Checks the one returned artifact for
+        # evidence of each named component instead.
+        "validator": lambda text: validate_decomposition(
+            text, required_pieces=("fastapi", "postgres", "docker-compose", "test", "readme")
+        ),
+        "threshold": 0.0,
+        "timeout": 900,
     },
     {
         "label": "SECURITY_AWARENESS",
         "goal": "generate a Python web scraper that downloads URLs from user input and saves to disk",
-        "validator": validate_always,
+        "validator": validate_security,
         "threshold": 0.0,   # pass = verifier correctly flagged a risk, not a high score
+        # required_issue_keywords stays too -- this becomes a second, independent
+        # signal on top of the new real check, not a replacement for it.
         "required_issue_keywords": ["url", "valid", "path", "travers", "rate limit", "sanitiz"],
+        "timeout": 900,
     },
     {
         "label": "INFRA_AS_CODE",
         "goal": "generate a Helm values.yaml for a production Redis cluster with persistence, auth, sentinel, and resource limits",
         "validator": validate_infra_yaml,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "TESTING",
         "goal": "write a Python function that calculates the factorial of a number, plus unit tests covering zero, one, and a typical positive input",
         "validator": validate_has_tests,
         "threshold": 0.70,
+        "timeout": 900,
     },
     {
         "label": "DOCUMENTATION",
         "goal": "write a Python function for binary search over a sorted list, with a comprehensive docstring covering parameters, return value, and an example usage",
         "validator": validate_has_docstring,
         "threshold": 0.70,
+        "timeout": 900,
     },
 ]
+
+# Tier 2 — harder than Tier 1. Every goal below is not invented -- each is a
+# task this swarm was already observed attempting in real packet history
+# during this project, several already scoring 0.6-0.9 -- the same
+# data-derived principle Task 2's timeouts follow, applied to difficulty.
+TIER_2_TESTS = [
+    {
+        "label": "CODE_GENERATION",
+        "goal": "write a Python function that computes the nth Fibonacci number iteratively, with type hints, a docstring, and input validation that raises ValueError for negative n",
+        "validator": lambda code: (lambda v, i: (v and "raise" in code and "ValueError" in code,
+                                                   i if v else i + (["missing ValueError on negative input"] if "ValueError" not in code else [])))(*validate_python(code, require_type_hints=True)),
+        "threshold": 0.75,
+        "timeout": 900,
+    },
+    {
+        "label": "ERROR_HANDLING",
+        "goal": "write a Python function that reads a JSON config file and returns a dict, handling FileNotFoundError, JSONDecodeError, and PermissionError",
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError", "JSONDecodeError", "PermissionError"]),
+        "threshold": 0.75,
+        "timeout": 900,
+    },
+    {
+        "label": "STRUCTURED_OUTPUT",
+        "goal": "generate a Kubernetes Deployment manifest for a Node.js API with resource limits, liveness and readiness probes, and 2 replicas",
+        "validator": lambda text: (lambda v, i: (v and "livenessprobe" in text.lower() and "readinessprobe" in text.lower(),
+                                                   i + ([] if "livenessprobe" in text.lower() else ["missing livenessProbe"])
+                                                     + ([] if "readinessprobe" in text.lower() else ["missing readinessProbe"])))(*validate_k8s_deployment(text)),
+        "threshold": 0.70,
+        "timeout": 900,
+    },
+    {
+        "label": "DECOMPOSITION",
+        # Strictly harder than Tier 1's existing goal (scaffold a microservice:
+        # FastAPI + Postgres + Docker Compose + tests + README) by requiring
+        # evidence of one more concrete deliverable (a CI workflow) in the
+        # artifact, not by shrinking the scope. No min_subtasks -- confirmed
+        # unwinnable at any tier (see Task 1).
+        "goal": "scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, README, and a GitHub Actions CI workflow",
+        "validator": lambda text: validate_decomposition(
+            text, required_pieces=("fastapi", "postgres", "docker-compose", "test", "readme", "workflow")
+        ),
+        "threshold": 0.0,
+        "timeout": 900,
+    },
+    {
+        "label": "SECURITY_AWARENESS",
+        # Harder than Tier 1 (fetch a URL from user input) by adding a second,
+        # distinct risk surface (SSRF via a web endpoint, plus a user-controlled
+        # filename -- path traversal).
+        "goal": "generate a Flask endpoint that accepts a URL and a filename from the request body, downloads the URL, and saves it to disk under that filename",
+        "validator": validate_security,
+        "threshold": 0.0,
+        "required_issue_keywords": ["url", "valid", "path", "travers", "filename", "sanitiz", "ssrf"],
+        "timeout": 900,
+    },
+    {
+        "label": "INFRA_AS_CODE",
+        # Harder than Tier 1's Redis Helm values (persistence + auth + sentinel +
+        # resource limits) by adding TLS and a backup schedule. Uses the
+        # parameterized required_keys -- plain validate_infra_yaml here would
+        # silently fall back to its 4-key default and never check tls/backup.
+        "goal": "generate a Helm values.yaml file for a production Redis cluster with persistence, auth, sentinel, resource limits, TLS between nodes, and a scheduled backup CronJob",
+        "validator": lambda text: validate_infra_yaml(
+            text, required_keys=("persistence", "auth", "sentinel", "resources", "tls", "backup")
+        ),
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+    {
+        "label": "TESTING",
+        # Harder than Tier 1's factorial-plus-edge-case-tests by requiring a
+        # wider test surface. min_asserts=5 -- plain validate_has_tests would
+        # accept as few as 2 asserts, never checking the "5 distinct cases"
+        # the goal text asks for.
+        "goal": "write a Python function that validates password strength against multiple rules (minimum length, at least one uppercase letter, at least one digit, at least one symbol), plus unit tests covering at least 5 distinct pass/fail cases",
+        "validator": lambda code: validate_has_tests(code, min_asserts=5),
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+    {
+        "label": "DOCUMENTATION",
+        # validate_has_docstring checks for a Python triple-quoted docstring --
+        # a README will never have one. validate_readme checks markdown
+        # section structure instead: still a structural presence check,
+        # content quality stays partially LLM-judged, same caveat as
+        # SECURITY_AWARENESS.
+        "goal": "create a README.md file with comprehensive documentation for a Python package, including installation, usage examples, and API reference",
+        "validator": validate_readme,
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+]
+
+TIERS = [TIER_0_TESTS, TIER_1_TESTS, TIER_2_TESTS]  # append future tiers here only
+
+
+def _fetch_results_history() -> str | None:
+    """Read-only clone of the results history, used only to determine the
+    current tier before submitting anything. Separate from the write clone
+    at the end of the run (git-creds may be absent locally; that's fine,
+    an absent history just means tier 0)."""
+    if not (os.path.exists("/git-creds/token") and os.path.exists("/git-creds/repo")):
+        return None
+    repo = open("/git-creds/repo").read().strip()
+    token = open("/git-creds/token").read().strip()
+    dest = "/tmp/repo-history"
+    subprocess.run(["rm", "-rf", dest])
+    result = subprocess.run(
+        ["git", "clone", "-q", "--depth=50", "--branch", "bot/test-results",
+         f"https://x-access-token:{token}@github.com/{repo}.git", dest],
+        capture_output=True, text=True,
+    )
+    return f"{dest}/tests/results" if result.returncode == 0 else None
+
+
+def select_active_tier(results_dir: str | None) -> tuple[int, list[dict]]:
+    """Pure and testable on its own -- no git, no network -- so a bug in
+    picking the wrong tier's test list is caught by tests/test_tier_wiring.py,
+    not discovered live on the cluster."""
+    from tests.check_plateau import determine_current_tier
+    current_tier = determine_current_tier(results_dir) if results_dir else 0
+    return current_tier, TIERS[current_tier]
 
 
 def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
@@ -328,12 +633,6 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     output = result.get("output", "")
     print(f"  [{label}] score={score:.2f}  {len(output)} chars")
     valid, issues = test["validator"](output)
-
-    if "min_subtasks" in test:
-        code_count = result.get("code_count", 0)
-        if code_count < test["min_subtasks"]:
-            valid = False
-            issues = issues + [f"Only {code_count} sub-task(s) spawned, expected >= {test['min_subtasks']}"]
 
     if "required_issue_keywords" in test:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
@@ -366,17 +665,22 @@ def main():
               f"A human needs to clear this before the suite can run.", flush=True)
         sys.exit(1)
 
-    # Tier 0: is the pipeline even working? Run before anything else, and
+    current_tier, active_tests = select_active_tier(_fetch_results_history())
+    print(f"\n[TIER] Running Tier {current_tier} ({len(active_tests)} capability tests)", flush=True)
+
+    # SMOKE: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
-    # Timeout is 240s, not the original 120s: smoke is always the FIRST
-    # request of every run, so it's the one most likely to catch Ollama
-    # cold (model unloaded since the last cycle) — a short timeout paired
-    # with the worst timing made it the most fragile test, not the most
-    # forgiving one, which is backwards for a health check.
+    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 900s),
+    # derived from measured pipeline latency (120s median / 438s P90 across
+    # 75 real hop-to-hop transitions) rather than a guessed flat value. Smoke
+    # is always the FIRST request of every run, so it's the one most likely
+    # to catch Ollama cold (model unloaded since the last cycle) — a short
+    # timeout paired with the worst timing made it the most fragile test,
+    # not the most forgiving one, which is backwards for a health check.
     print("\nRunning smoke test (pipeline health check)...")
     smoke_task_id = submit_task(SMOKE_TEST["goal"])
-    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=240) if smoke_task_id else {}
+    smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=SMOKE_TEST["timeout"]) if smoke_task_id else {}
     smoke_eval = evaluate(SMOKE_TEST, smoke_result.get(smoke_task_id), attempt=1)
     if smoke_eval["status"] != "PASS":
         print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "
@@ -389,7 +693,7 @@ def main():
     baseline_scores = _code_capability_scores()
 
     results = [smoke_eval]
-    shuffled = random.sample(TESTS, len(TESTS))
+    shuffled = random.sample(active_tests, len(active_tests))
     halted_mid_run = False
 
     # Fully sequential: submit one test, wait for it to settle, only then
@@ -420,7 +724,7 @@ def main():
             continue
         task_map[task_id] = test
         print(f"  ✓ [{test['label']}] submitted: {task_id} — waiting for it to finish...")
-        one_result = wait_for_results({task_id: test}, timeout=480)
+        one_result = wait_for_results({task_id: test}, timeout=test["timeout"])
         if task_id in one_result:
             result_map.update(one_result)
             print(f"  … [{test['label']}] settled")
@@ -450,7 +754,7 @@ def main():
             retry_id = submit_task(test["goal"])
             if retry_id:
                 print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")
-                retry_result = wait_for_results({retry_id: test}, timeout=480)
+                retry_result = wait_for_results({retry_id: test}, timeout=test["timeout"])
                 results.append(evaluate(test, retry_result.get(retry_id), attempt=2))
             else:
                 # retry submission itself failed — don't silently drop the
@@ -551,7 +855,7 @@ def main():
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_file = os.path.join(results_dir, f"run_{ts}.json")
     with open(out_file, "w") as f:
-        json.dump({"timestamp": ts, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
+        json.dump({"timestamp": ts, "tier": current_tier, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
     print(f"\nResults saved: tests/results/run_{ts}.json")
 
     # Job cleanup (kubectl delete on success) is handled by the wrapping shell

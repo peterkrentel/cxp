@@ -18,6 +18,7 @@ sync:
 	cp requirements.txt $(CHART)/app/requirements.txt
 	mkdir -p $(CHART)/app/tests
 	cp tests/run_tests.py $(CHART)/app/tests/run_tests.py
+	cp tests/check_plateau.py $(CHART)/app/tests/check_plateau.py
 	mkdir -p $(CHART)/app/scripts
 	cp scripts/sandbox_reaper.py $(CHART)/app/scripts/sandbox_reaper.py
 

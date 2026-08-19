@@ -1,0 +1,58 @@
+{
+  "timestamp": "20260819_042812",
+  "passed": 2,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "80708614"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 0.9,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "59a6506d"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: executor-1 failed on code (441d4d95): Server error '500 Internal Server Error' for url 'http://cxp-ollama:11434/api/chat'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    }
+  ]
+}

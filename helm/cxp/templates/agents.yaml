@@ -16,6 +16,18 @@ spec:
     metadata:
       labels:
         app: {{ printf "cxp-%s" $name }}
+      annotations:
+        # Forces a rolling restart whenever any mounted ConfigMap's actual
+        # content changes -- found live 2026-08-19: `helm upgrade` updates
+        # a ConfigMap's content fine, but Kubernetes never restarts a
+        # Deployment just because a volume-mounted ConfigMap changed. A
+        # 39-hour-old cxp-web pod kept serving pre-#39 code (no tier_status
+        # in /api/state at all) through two subsequent `make deploy` runs,
+        # invisible until manually checked -- `kubectl rollout restart` is
+        # not something this project's standing workflow can rely on a
+        # human remembering every time.
+        checksum/app-code: {{ include (print $.Template.BasePath "/app-code.yaml") $ | sha256sum }}
+        checksum/skills-config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
     spec:
       {{- if eq $cfg.role "deployer" }}
       serviceAccountName: cxp-deployer

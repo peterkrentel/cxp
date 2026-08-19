@@ -489,6 +489,98 @@ TIER_1_TESTS = [
     },
 ]
 
+# Tier 2 — harder than Tier 1. Every goal below is not invented -- each is a
+# task this swarm was already observed attempting in real packet history
+# during this project, several already scoring 0.6-0.9 -- the same
+# data-derived principle Task 2's timeouts follow, applied to difficulty.
+TIER_2_TESTS = [
+    {
+        "label": "CODE_GENERATION",
+        "goal": "write a Python function that computes the nth Fibonacci number iteratively, with type hints, a docstring, and input validation that raises ValueError for negative n",
+        "validator": lambda code: (lambda v, i: (v and "raise" in code and "ValueError" in code,
+                                                   i if v else i + (["missing ValueError on negative input"] if "ValueError" not in code else [])))(*validate_python(code, require_type_hints=True)),
+        "threshold": 0.75,
+        "timeout": 900,
+    },
+    {
+        "label": "ERROR_HANDLING",
+        "goal": "write a Python function that reads a JSON config file and returns a dict, handling FileNotFoundError, JSONDecodeError, and PermissionError",
+        "validator": lambda code: validate_error_handling(code, ["FileNotFoundError", "JSONDecodeError", "PermissionError"]),
+        "threshold": 0.75,
+        "timeout": 900,
+    },
+    {
+        "label": "STRUCTURED_OUTPUT",
+        "goal": "generate a Kubernetes Deployment manifest for a Node.js API with resource limits, liveness and readiness probes, and 2 replicas",
+        "validator": lambda text: (lambda v, i: (v and "livenessprobe" in text.lower() and "readinessprobe" in text.lower(),
+                                                   i + ([] if "livenessprobe" in text.lower() else ["missing livenessProbe"])
+                                                     + ([] if "readinessprobe" in text.lower() else ["missing readinessProbe"])))(*validate_k8s_deployment(text)),
+        "threshold": 0.70,
+        "timeout": 900,
+    },
+    {
+        "label": "DECOMPOSITION",
+        # Strictly harder than Tier 1's existing goal (scaffold a microservice:
+        # FastAPI + Postgres + Docker Compose + tests + README) by requiring
+        # evidence of one more concrete deliverable (a CI workflow) in the
+        # artifact, not by shrinking the scope. No min_subtasks -- confirmed
+        # unwinnable at any tier (see Task 1).
+        "goal": "scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, README, and a GitHub Actions CI workflow",
+        "validator": lambda text: validate_decomposition(
+            text, required_pieces=("fastapi", "postgres", "docker-compose", "test", "readme", "workflow")
+        ),
+        "threshold": 0.0,
+        "timeout": 900,
+    },
+    {
+        "label": "SECURITY_AWARENESS",
+        # Harder than Tier 1 (fetch a URL from user input) by adding a second,
+        # distinct risk surface (SSRF via a web endpoint, plus a user-controlled
+        # filename -- path traversal).
+        "goal": "generate a Flask endpoint that accepts a URL and a filename from the request body, downloads the URL, and saves it to disk under that filename",
+        "validator": validate_security,
+        "threshold": 0.0,
+        "required_issue_keywords": ["url", "valid", "path", "travers", "filename", "sanitiz", "ssrf"],
+        "timeout": 900,
+    },
+    {
+        "label": "INFRA_AS_CODE",
+        # Harder than Tier 1's Redis Helm values (persistence + auth + sentinel +
+        # resource limits) by adding TLS and a backup schedule. Uses the
+        # parameterized required_keys -- plain validate_infra_yaml here would
+        # silently fall back to its 4-key default and never check tls/backup.
+        "goal": "generate a Helm values.yaml file for a production Redis cluster with persistence, auth, sentinel, resource limits, TLS between nodes, and a scheduled backup CronJob",
+        "validator": lambda text: validate_infra_yaml(
+            text, required_keys=("persistence", "auth", "sentinel", "resources", "tls", "backup")
+        ),
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+    {
+        "label": "TESTING",
+        # Harder than Tier 1's factorial-plus-edge-case-tests by requiring a
+        # wider test surface. min_asserts=5 -- plain validate_has_tests would
+        # accept as few as 2 asserts, never checking the "5 distinct cases"
+        # the goal text asks for.
+        "goal": "write a Python function that validates password strength against multiple rules (minimum length, at least one uppercase letter, at least one digit, at least one symbol), plus unit tests covering at least 5 distinct pass/fail cases",
+        "validator": lambda code: validate_has_tests(code, min_asserts=5),
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+    {
+        "label": "DOCUMENTATION",
+        # validate_has_docstring checks for a Python triple-quoted docstring --
+        # a README will never have one. validate_readme checks markdown
+        # section structure instead: still a structural presence check,
+        # content quality stays partially LLM-judged, same caveat as
+        # SECURITY_AWARENESS.
+        "goal": "create a README.md file with comprehensive documentation for a Python package, including installation, usage examples, and API reference",
+        "validator": validate_readme,
+        "threshold": 0.65,
+        "timeout": 900,
+    },
+]
+
 
 def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]

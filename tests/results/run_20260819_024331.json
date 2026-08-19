@@ -1,0 +1,47 @@
+{
+  "timestamp": "20260819_024331",
+  "passed": 1,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "6b01cc67"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "TIMEOUT"
+    }
+  ]
+}

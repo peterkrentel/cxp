@@ -9,6 +9,23 @@ metadata:
     app.kubernetes.io/component: {{ $name }}
 spec:
   replicas: {{ $cfg.replicas }}
+  # Default Deployment rollout (maxSurge/maxUnavailable both 25%) rounds
+  # maxSurge down to 0 for any single-replica Deployment here (cxp-web,
+  # cxp-planner, cxp-dashboard, etc.) -- meaning the old pod is torn down
+  # BEFORE the new one starts, leaving a real gap where the Service has no
+  # healthy backend at all. Found live 2026-08-19: run_tests.py hit
+  # "Connection refused" against http://cxp-web:8080 mid-run, caused by
+  # exactly this gap during a routine ConfigMap-triggered restart (see
+  # #43's checksum annotation). Explicit surge-before-kill eliminates it.
+  # Safe across every role here (stateless HTTP services and JetStream
+  # queue-group consumers alike) -- the packet idempotency fence
+  # (_claim_packet/_mark_packet_done in agent_shell.py) already handles
+  # two pods briefly processing the same queue group correctly.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: {{ printf "cxp-%s" $name }}

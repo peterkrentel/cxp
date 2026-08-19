@@ -74,3 +74,22 @@ def test_determine_current_tier_never_exceeds_the_top_of_the_ladder(tmp_path):
             (tmp_path / f"run_{i:04d}.json").write_text(json.dumps(_all_pass(tier)))
             i += 1
     assert determine_current_tier(str(tmp_path)) == top
+
+
+def test_build_tier_status_payload_with_no_history(tmp_path):
+    from tests.check_plateau import build_tier_status_payload, TIERS
+    payload = build_tier_status_payload(str(tmp_path / "nonexistent"))
+    assert payload["active_tier"] == 0
+    assert payload["top_tier"] == len(TIERS) - 1
+    assert payload["streak_target"] == STREAK_TARGET
+    assert payload["streaks"] == {str(t): 0 for t in range(len(TIERS))}
+
+
+def test_build_tier_status_payload_reflects_real_streaks(tmp_path):
+    from tests.check_plateau import build_tier_status_payload
+    for i in range(3):
+        (tmp_path / f"run_{i:04d}.json").write_text(json.dumps(_all_pass(0)))
+    payload = build_tier_status_payload(str(tmp_path))
+    assert payload["streaks"]["0"] == 3
+    assert payload["streaks"]["1"] == 0
+    assert payload["active_tier"] == 0

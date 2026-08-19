@@ -1,0 +1,51 @@
+{
+  "timestamp": "20260816_162542",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: planner-1 failed on plan (90489ec2): ReadTimeout('')"
+    }
+  ]
+}

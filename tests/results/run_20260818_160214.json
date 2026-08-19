@@ -1,0 +1,63 @@
+{
+  "timestamp": "20260818_160214",
+  "passed": 1,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "c51a3b68"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "WARN",
+      "score": 0,
+      "attempt": 2,
+      "issues": [
+        "No function definition found"
+      ],
+      "task_id": "c6688ef0"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.9,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 36, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "d076d716"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.8,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "6bc9f13f"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    }
+  ]
+}

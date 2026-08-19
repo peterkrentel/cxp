@@ -1,0 +1,63 @@
+{
+  "timestamp": "20260818_230652",
+  "passed": 2,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.9,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "230ae2cc"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.5,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "7c48da67"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "WARN",
+      "score": 0.9,
+      "attempt": 2,
+      "issues": [
+        "Only 1 sub-task(s) spawned, expected >= 3"
+      ],
+      "task_id": "0a6af60a"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "8c4be32e"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "TIMEOUT"
+    }
+  ]
+}

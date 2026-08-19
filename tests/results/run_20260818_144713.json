@@ -1,0 +1,55 @@
+{
+  "timestamp": "20260818_144713",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "7881b1df"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "0b543b0a"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "WARN",
+      "score": 0.7,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "746debea"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "TIMEOUT"
+    }
+  ]
+}

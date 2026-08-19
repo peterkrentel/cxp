@@ -638,10 +638,21 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]
     if not result:
         return {"label": label, "status": "TIMEOUT"}
-    score = result.get("score") or 0
+    # `result.get("score") or 0` used to collapse "verifier genuinely scored
+    # this 0.0" and "the score field was missing entirely" (e.g. an upstream
+    # parsing failure) into the exact same value -- found live 2026-08-19
+    # trying to explain a SMOKE result after the fact and discovering there
+    # was no way to tell which had happened. Explicit None-check instead.
+    raw_score = result.get("score")
+    score_was_missing = raw_score is None
+    score = raw_score if raw_score is not None else 0.0
     output = result.get("output", "")
-    print(f"  [{label}] score={score:.2f}  {len(output)} chars")
+    missing_note = " (score field missing -- defaulted, not a genuine 0.0)" if score_was_missing else ""
+    print(f"  [{label}] score={score:.2f}{missing_note}  {len(output)} chars")
     valid, issues = test["validator"](output)
+
+    if score_was_missing:
+        issues = issues + ["No score returned by verifier (missing, not a genuine 0.0) -- likely an upstream parsing failure"]
 
     if "required_issue_keywords" in test:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
@@ -654,6 +665,7 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         "label": label,
         "status": "PASS" if passed else "WARN",
         "score": score,
+        "score_was_missing": score_was_missing,
         "attempt": attempt,
         "issues": issues,
         "task_id": result.get("task_id"),
@@ -694,6 +706,14 @@ def main():
     if smoke_eval["status"] != "PASS":
         print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "
               f"not just a specific capability. Running the rest of the suite anyway for more signal.")
+        # evaluate() only returns an "issues" key when it actually ran the
+        # validator (i.e. status != TIMEOUT) -- found live 2026-08-19: a
+        # WARN result printed just a score and char count with no way to
+        # tell, after the fact, whether validate_smoke rejected the code
+        # (syntax error / missing "hello") or the verifier itself scored it
+        # low, since the actual issues list was computed but never printed.
+        if smoke_eval.get("issues"):
+            print(f"    issues: {smoke_eval['issues']}")
     else:
         print("  ✓ SMOKE passed — pipeline is up")
 

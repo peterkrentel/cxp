@@ -362,7 +362,16 @@ SMOKE_TEST = {
     "goal": "write a Python one-liner that prints 'hello world'",
     "validator": validate_smoke,
     "threshold": 0.3,
-    "timeout": 900,
+    # 900s was sized for one hop's P90 latency (438s) x ~3 hops -- but SMOKE
+    # gets no retry (one shot, unlike every capability test below), and real
+    # data confirms 900s isn't enough under real conditions: both post-900s-
+    # fix runs (2026-08-19, 13:20 and 14:13 UTC) still show SMOKE timing out,
+    # even though individual Ollama calls in that window topped out around
+    # 5m12s -- the ceiling with only 2 concurrent slots is queueing across 3
+    # sequential hops, not any single call being unreasonably slow. 1800s
+    # gives real margin for that queueing without touching Ollama's
+    # concurrency architecture at all.
+    "timeout": 1800,
 }
 
 # Tier 0 — genuinely minimal per-capability goals. Deliberately smaller than
@@ -629,10 +638,21 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]
     if not result:
         return {"label": label, "status": "TIMEOUT"}
-    score = result.get("score") or 0
+    # `result.get("score") or 0` used to collapse "verifier genuinely scored
+    # this 0.0" and "the score field was missing entirely" (e.g. an upstream
+    # parsing failure) into the exact same value -- found live 2026-08-19
+    # trying to explain a SMOKE result after the fact and discovering there
+    # was no way to tell which had happened. Explicit None-check instead.
+    raw_score = result.get("score")
+    score_was_missing = raw_score is None
+    score = raw_score if raw_score is not None else 0.0
     output = result.get("output", "")
-    print(f"  [{label}] score={score:.2f}  {len(output)} chars")
+    missing_note = " (score field missing -- defaulted, not a genuine 0.0)" if score_was_missing else ""
+    print(f"  [{label}] score={score:.2f}{missing_note}  {len(output)} chars")
     valid, issues = test["validator"](output)
+
+    if score_was_missing:
+        issues = issues + ["No score returned by verifier (missing, not a genuine 0.0) -- likely an upstream parsing failure"]
 
     if "required_issue_keywords" in test:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
@@ -645,6 +665,7 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         "label": label,
         "status": "PASS" if passed else "WARN",
         "score": score,
+        "score_was_missing": score_was_missing,
         "attempt": attempt,
         "issues": issues,
         "task_id": result.get("task_id"),
@@ -671,13 +692,13 @@ def main():
     # SMOKE: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
-    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 900s),
-    # derived from measured pipeline latency (120s median / 438s P90 across
-    # 75 real hop-to-hop transitions) rather than a guessed flat value. Smoke
-    # is always the FIRST request of every run, so it's the one most likely
-    # to catch Ollama cold (model unloaded since the last cycle) — a short
-    # timeout paired with the worst timing made it the most fragile test,
-    # not the most forgiving one, which is backwards for a health check.
+    # Timeout is test-specific (SMOKE_TEST["timeout"], currently 1800s --
+    # see the constant's own comment for why this is larger than the
+    # capability tests' 900s). Smoke is always the FIRST request of every
+    # run, so it's the one most likely to catch Ollama cold (model unloaded
+    # since the last cycle) and gets no retry — a short timeout paired with
+    # the worst timing made it the most fragile test, not the most
+    # forgiving one, which is backwards for a health check.
     print("\nRunning smoke test (pipeline health check)...")
     smoke_task_id = submit_task(SMOKE_TEST["goal"])
     smoke_result = wait_for_results({smoke_task_id: SMOKE_TEST}, timeout=SMOKE_TEST["timeout"]) if smoke_task_id else {}
@@ -685,6 +706,14 @@ def main():
     if smoke_eval["status"] != "PASS":
         print(f"  ⚠ SMOKE FAILED ({smoke_eval['status']}) — the pipeline itself looks broken, "
               f"not just a specific capability. Running the rest of the suite anyway for more signal.")
+        # evaluate() only returns an "issues" key when it actually ran the
+        # validator (i.e. status != TIMEOUT) -- found live 2026-08-19: a
+        # WARN result printed just a score and char count with no way to
+        # tell, after the fact, whether validate_smoke rejected the code
+        # (syntax error / missing "hello") or the verifier itself scored it
+        # low, since the actual issues list was computed but never printed.
+        if smoke_eval.get("issues"):
+            print(f"    issues: {smoke_eval['issues']}")
     else:
         print("  ✓ SMOKE passed — pipeline is up")
 

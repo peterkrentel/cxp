@@ -7,51 +7,53 @@ Two separate suites live here, at two different levels:
 - **`tests/unit/`** — fast, deterministic pytest tests of agent-level control-plane logic (the ollama semaphore, the packet idempotency fence, diagnostician's timeout classification, planner's decomposition edge cases), run on every PR via CI's `unit-tests` job. No cluster, no LLM, no network — a fake JetStream KV (`tests/unit/conftest.py`) stands in for the real one. Added 2026-08-17 after a live duplicate-packet-processing bug shipped with no test coverage at all; run with `pytest tests/unit`.
 - **Everything below this line** is the *other* suite — `run_tests.py`, an end-to-end suite against a live swarm with a real (small, non-deterministic) LLM, run hourly by the in-cluster CronJob, not on every PR.
 
-## Where we are: three tiers, run hourly by the CronJob
+## Where we are: SMOKE, a difficulty ladder, and a regression check
 
-1. **Tier 0 — smoke test.** One trivial task ("print hello world"), always first. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X." The suite still continues after a smoke failure, for more signal.
-2. **Tier 1 — capability coverage.** 8 tests, one per [assessor capability label](../README.md#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. Full case-by-case detail (goal text, expected behavior, self-improve trigger) is in [`examples.md`](examples.md) — that file also tracks which scenarios are automated vs. manual-only, since 3 of the 9 originally-documented scenarios only ever existed as manual demos until today.
-3. **Tier 2 — regression check.** Compares this run's average `code`-capability score (from episodic memory) against recent history. A real drop since the last skill revision is a materially different signal than "missed today's static threshold."
+1. **SMOKE.** One trivial task ("print hello world"), always run first regardless of which difficulty tier below is active. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X." The suite still continues after a smoke failure, for more signal.
+2. **The difficulty ladder — `TIER_0_TESTS` → `TIER_1_TESTS` → `TIER_2_TESTS` → ...** — `run_tests.py`'s `TIERS` list, walked by `check_plateau.py`. Each tier covers the same 8 [assessor capability labels](../README.md#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. `TIER_0_TESTS` is deliberately minimal so it's clearable from day one; `TIER_1_TESTS` is the original fixed 8; `TIER_2_TESTS` is harder still. Full case-by-case detail for `TIER_1_TESTS` (goal text, expected behavior, self-improve trigger) is in [`examples.md`](examples.md).
+3. **Regression check.** Compares this run's average `code`-capability score (from episodic memory) against recent history. A real drop since the last skill revision is a materially different signal than "missed today's static threshold." Independent of the difficulty ladder above — this runs regardless of which tier is active.
 
 Everything runs fully sequentially (one submission at a time, waiting for it to settle) — running tests concurrently piles up enough simultaneous LLM calls on the single Ollama instance to blow past its read timeout. See [`run_tests.py`](run_tests.py) for the actual implementation, [`../docs/architecture.md`](../docs/architecture.md) for how this fits into the rest of the swarm.
 
 The runner also checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped entirely, rather than cascading into a wall of 409s that reads as a false capability regression.
 
-## The known ceiling — and how we'll know we've hit it
+## Why a ladder, not a fixed 8
 
-The current 8 tests are a **fixed, repeated yardstick on purpose** — that repetition is what makes the regression check meaningful (you can't tell a skill revision made things worse if the test changes every run too). But it's a real ceiling: once the swarm reliably passes all 8, there's nothing left in this suite to *learn* from — it becomes a pure smoke/regression check, not a driver of further improvement.
+A single fixed set of 8 tests is a **good regression yardstick but a bad growth driver** — once the swarm reliably passes all 8, there's nothing left to *learn* from; it becomes a pure smoke/regression check. The ladder exists so the suite keeps teaching the swarm something after it clears the easy rung, without ever making the bar so hard on day one that nothing passes (which is what happened before this restructuring — see the [tiered test suite plan](../docs/superpowers/plans/2026-08-18-tiered-test-suite.md) for the original diagnosis).
 
-**Finish line:** 8/8 pass for **10 consecutive hourly runs**. Enough to rule out a lucky streak given the real score variance we've already observed (the same test scoring 0.5 one run and 0.9 the next, purely from small-model non-determinism), without dragging things out once the signal is actually clear.
+**Promotion:** `determine_current_tier()` walks up from Tier 0. A tier promotes to the next once it clears **10 consecutive clean runs** (`STREAK_TARGET`, `check_plateau.py`) — all 8 capabilities `PASS` in the same run, back-to-back, no exceptions counted toward the streak. "Consecutive" is unforgiving: one flaky run resets the streak to zero, it doesn't just pause. Promotion never skips a tier and never walks past the top of `TIERS` on its own — reaching the top and plateauing there is a signal to *add* a new tier (append a `TIER_3_TESTS` list — no promotion-logic changes needed anywhere), not something the code invents on its own.
 
-Check it with:
+`run_tests.py`'s `main()` calls `select_active_tier()` (which calls `determine_current_tier()` against the git-tracked `tests/results/` history, fetched read-only before anything is submitted) to decide which tier's goals to actually run each hour.
+
+Check current standing with:
 ```bash
 python3 tests/check_plateau.py tests/results
 ```
-This is also run automatically as part of the CronJob's git-push step (it has the full historical `tests/results/` clone available there, which no single run's pod has on its own).
+prints every tier's streak and which one is currently active. This is also run automatically as part of the CronJob's git-push step (it has the full historical `tests/results/` clone available there, which no single run's pod has on its own), and additionally publishes the same summary to NATS KV (`cxp-state`/`tier-status`) so it's visible on the web dashboard's "Tier Progress" panel — the dashboard pod has no git credentials of its own to read the results history directly, so that publish step is the only path.
 
-## What happens after the finish line — tier 3 (not built yet)
+## Adding a harder tier later
 
-Three options for where harder tests come from, in increasing order of risk:
+When the top tier in `TIERS` plateaus (`check_plateau.py` prints a "FINISH LINE REACHED" notice when it does), options for where the next tier's goals come from, in increasing order of risk:
 
-1. **Hand-written harder variants of the existing 8 categories** (e.g., "add two numbers" → "add two numbers with overflow and type-coercion edge cases"). Lowest risk, no new infrastructure, just more upfront work. **Start here.**
+1. **Hand-written harder variants of the existing 8 categories** (what `TIER_2_TESTS` already is — e.g. `ERROR_HANDLING` adding a third exception type, `INFRA_AS_CODE` adding TLS and scheduled backups on top of Tier 1's Redis cluster). Lowest risk, no new infrastructure, just more upfront work. **Keep doing this for the next rung.**
 2. **An established external benchmark** (HumanEval-style problems). Sidesteps self-invention entirely since the "right answer" already exists independently of this swarm.
 3. **Generated from assessor's accumulated `gaps` data** (currently written to semantic memory on every completed artifact, and currently unused by anything). The most interesting option — targets the swarm's *actual* observed weaknesses — but reopens a real problem: a model can't reliably invent a hard test *and* grade its own attempt at it without an independent anchor. If this is ever built, it needs either a human-approval gate on generated test candidates, or a distinctly different/larger model doing the generating and grading, so the swarm isn't judging its own homework.
 
-Whichever option comes next, keep it in a separate bucket from the tier-1/tier-2 tracking above — a new, harder test failing shouldn't get conflated with the stable 8 regressing.
+A new tier's validator should independently check something structural about the artifact — never let "the LLM call succeeded" alone count as a pass (see `tests/test_validators.py` for the existing pattern). `DECOMPOSITION` specifically: don't reach for a sub-task/packet count as the difficulty signal — confirmed via real packet history that this planner spawns exactly one `code`-type packet per task regardless of goal complexity, so a count-based check is unwinnable at any tier. Check the artifact's own content instead (`validate_decomposition`).
 
-## Tier 3 — drafted, not wired in
+## Tier 2 — built, not yet promoted into
 
-Harder variants of each Tier-1 category, ready to move into `run_tests.py`'s `TESTS` list (and a new `TESTS_TIER3` list, kept separate per above) once `check_plateau.py` reports the finish line. Deliberately not activated yet — Tier 1 and Tier 3 need to stay distinct so a hard new test failing isn't confused with the stable baseline regressing.
+`TIER_2_TESTS` exists in `run_tests.py` today, ready to run once `TIER_1_TESTS` clears its 10-run streak. Every goal in it is grounded in something this swarm was actually observed attempting in real packet history (several already scoring 0.6-0.9), not invented difficulty:
 
-| Tier 1 (today) | Tier 3 (next, drafted) |
+| Tier 1 (today) | Tier 2 (next rung, built) |
 |---|---|
-| **CODE_GENERATION** — add two numbers, type hints + docstring | Add two numbers, handling both `int` and `float`, raising `TypeError` on non-numeric input, and correctly handling very large integers without overflow |
-| **ERROR_HANDLING** — read a JSON file, handle `FileNotFoundError`/`JSONDecodeError` | Fetch data from a URL, parse as JSON, and handle connection errors, timeouts, HTTP error codes, and JSON decode errors — each with a distinct custom exception type and logging |
-| **STRUCTURED_OUTPUT** — one Kubernetes Deployment manifest | A full manifest set (Deployment, Service, ConfigMap, HorizontalPodAutoscaler) with correct cross-references — Service selector matching Deployment labels, HPA targeting the Deployment |
-| **DECOMPOSITION** — scaffold a FastAPI+Postgres+Docker microservice (≥3 sub-tasks) | Scaffold a multi-service system: FastAPI backend, React frontend, Postgres with migrations, Redis cache, Docker Compose, CI pipeline config, tests per service, docs (raise `min_subtasks` to 5-6) |
-| **SECURITY_AWARENESS** — web scraper downloading user-supplied URLs | A file-upload endpoint saving to disk using a user-provided filename — more surface area to flag correctly (path traversal, arbitrary file write, no size limit, no content-type check), not just one obvious risk |
-| **INFRA_AS_CODE** — Helm values.yaml for a Redis cluster | A complete Helm chart (`Chart.yaml`, `values.yaml`, templates for Deployment/Service/Ingress) for Postgres with replication, automated backups, and a NetworkPolicy restricting access to the app namespace only |
-| **TESTING** — factorial function + basic unit tests | A thread-safe LRU cache class, plus a pytest suite covering eviction order, concurrent-access thread safety, and edge cases (`max_size=0`, `max_size=1`) |
-| **DOCUMENTATION** — binary search with a docstring | A rate limiter class with multiple strategies (fixed window, sliding window, token bucket) — full docstrings per method (params, returns, raised exceptions) plus a runnable usage example for each strategy |
+| **CODE_GENERATION** — add two numbers, type hints + docstring | nth Fibonacci number iteratively, type hints + docstring, raises `ValueError` on negative input |
+| **ERROR_HANDLING** — read a JSON file, handle `FileNotFoundError`/`JSONDecodeError` | Read a JSON config file, handle `FileNotFoundError`/`JSONDecodeError`/`PermissionError` (three exceptions, not two) |
+| **STRUCTURED_OUTPUT** — one Kubernetes Deployment manifest with resource limits | Same, plus liveness/readiness probes and 2 replicas |
+| **DECOMPOSITION** — scaffold a FastAPI+Postgres+Docker microservice | Same, plus a GitHub Actions CI workflow — same base scope, one more required deliverable |
+| **SECURITY_AWARENESS** — web scraper downloading a user-supplied URL | A Flask endpoint accepting both a URL *and* a user-controlled filename — two distinct risk surfaces (SSRF + path traversal) instead of one |
+| **INFRA_AS_CODE** — Helm values.yaml for a Redis cluster (persistence/auth/sentinel/resources) | Same, plus TLS between nodes and a scheduled backup CronJob |
+| **TESTING** — factorial function + basic edge-case tests | Password-strength validator against multiple rules, plus ≥5 distinct pass/fail test cases |
+| **DOCUMENTATION** — binary search with a comprehensive docstring | A full README.md (install/usage/API reference) — a genuinely different artifact type, not just a longer docstring |
 
-No validators written yet on purpose — writing them now, before there's any real signal these are the right next tests, would be guessing. Write them when Tier 3 actually activates, informed by whatever Tier 1 turned out to actually teach us about this model's failure modes.
+`SECURITY_AWARENESS` and `DOCUMENTATION` stay partially LLM-judged on purpose — their validators (`validate_security`, `validate_readme`) catch the crudest structural failures, but real security/documentation-quality review still needs judgment a static check can't fully replace.

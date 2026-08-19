@@ -7,7 +7,7 @@ kubectl exec -n cxp deploy/cxp-dashboard -- python /app/main.py submit "GOAL"
 
 Each test has a label — what AI capability it evaluates. Score > 0.8 = pass.
 
-**Automation status matters here** — it's easy to assume everything below runs automatically; it doesn't. `tests/run_tests.py`'s hourly CronJob currently automates 8 of these 9 (marked **Automated** below), plus a Tier-0 smoke test ("print hello world", not listed here since it's not capability-specific) and a regression check comparing each run's scores against recent history. The rest are marked **Manual only** — real scenarios worth trying by hand, but nothing currently submits them on a schedule.
+**Automation status matters here** — it's easy to assume everything below runs automatically; it doesn't. `tests/run_tests.py`'s hourly CronJob currently automates 8 of these 9 (marked **Automated** below, at whichever difficulty tier is currently active — see [`STRATEGY.md`](STRATEGY.md); goal text below is the `TIER_1_TESTS` version specifically), plus a SMOKE test ("print hello world", not listed here since it's not capability-specific and always runs regardless of tier) and a regression check comparing each run's scores against recent history. The rest are marked **Manual only** — real scenarios worth trying by hand, but nothing currently submits them on a schedule.
 
 ---
 
@@ -49,13 +49,13 @@ generate a Kubernetes Deployment manifest for a Node.js API with health checks, 
 
 ## DECOMPOSITION — planner quality
 
-**Automated** (hourly CronJob) — same goal text as below, but checks sub-task *count* only (≥3, relaxed from the "5+" expectation here — too strict for the small local planner model), not artifact quality
+**Automated** (hourly CronJob) — same goal text as below, but checks the returned artifact's *content* for evidence of each named component (`validate_decomposition`), not sub-task count. Confirmed via real packet history that this planner always spawns exactly one `code`-type packet per task regardless of goal complexity, so a sub-task-count check (what this used to be) can never distinguish an easy goal from a hard one — fixed 2026-08-19.
 
 ```
 scaffold a complete Python microservice with FastAPI, Postgres, Docker Compose, tests, and README
 ```
-**Expect:** Planner breaks into 5+ sub-tasks (API code, DB model, Docker, tests, docs)
-**Self-improve trigger:** Missing test sub-task → verifier scores < 0.7 → reflect fires, but note it only ever rewrites the `executor` skill (hardcoded `SKILL_TARGET` in `reflect.py`) — planner's own skill file is never actually updated by anything today, despite the failure originating in planner's decomposition
+**Expect:** the single returned artifact shows evidence of each named component (fastapi, postgres, docker-compose, test, readme) — not necessarily as five separate sub-tasks
+**Self-improve trigger:** missing a component → verifier scores < 0.7 → reflect fires, but note it only ever rewrites the `executor` skill (hardcoded `SKILL_TARGET` in `reflect.py`) — planner's own skill file is never actually updated by anything today, despite the failure originating in planner's decomposition
 
 ---
 

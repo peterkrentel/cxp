@@ -4,6 +4,7 @@
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 import urllib.request
@@ -341,9 +342,12 @@ def validate_has_docstring(code: str) -> tuple[bool, list[str]]:
     return len(issues) == 0, issues
 
 
-# Tier 0 — pipeline health check, always run first, never shuffled with the
-# rest. A failure here means "the swarm is broken," a distinct and more
-# urgent signal than "the swarm is bad at capability X."
+# SMOKE is a pipeline health check, always run first, never shuffled with the
+# rest, and run unconditionally regardless of which difficulty tier (below)
+# is active. A failure here means "the swarm is broken," a distinct and more
+# urgent signal than "the swarm is bad at capability X." Not to be confused
+# with TIER_0_TESTS -- "tier" here would mean "runs first," an unrelated,
+# pre-existing use of the word.
 SMOKE_TEST = {
     "label": "SMOKE",
     "goal": "write a Python one-liner that prints 'hello world'",
@@ -581,6 +585,36 @@ TIER_2_TESTS = [
     },
 ]
 
+TIERS = [TIER_0_TESTS, TIER_1_TESTS, TIER_2_TESTS]  # append future tiers here only
+
+
+def _fetch_results_history() -> str | None:
+    """Read-only clone of the results history, used only to determine the
+    current tier before submitting anything. Separate from the write clone
+    at the end of the run (git-creds may be absent locally; that's fine,
+    an absent history just means tier 0)."""
+    if not (os.path.exists("/git-creds/token") and os.path.exists("/git-creds/repo")):
+        return None
+    repo = open("/git-creds/repo").read().strip()
+    token = open("/git-creds/token").read().strip()
+    dest = "/tmp/repo-history"
+    subprocess.run(["rm", "-rf", dest])
+    result = subprocess.run(
+        ["git", "clone", "-q", "--depth=50", "--branch", "bot/test-results",
+         f"https://x-access-token:{token}@github.com/{repo}.git", dest],
+        capture_output=True, text=True,
+    )
+    return f"{dest}/tests/results" if result.returncode == 0 else None
+
+
+def select_active_tier(results_dir: str | None) -> tuple[int, list[dict]]:
+    """Pure and testable on its own -- no git, no network -- so a bug in
+    picking the wrong tier's test list is caught by tests/test_tier_wiring.py,
+    not discovered live on the cluster."""
+    from tests.check_plateau import determine_current_tier
+    current_tier = determine_current_tier(results_dir) if results_dir else 0
+    return current_tier, TIERS[current_tier]
+
 
 def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]
@@ -622,7 +656,10 @@ def main():
               f"A human needs to clear this before the suite can run.", flush=True)
         sys.exit(1)
 
-    # Tier 0: is the pipeline even working? Run before anything else, and
+    current_tier, active_tests = select_active_tier(_fetch_results_history())
+    print(f"\n[TIER] Running Tier {current_tier} ({len(active_tests)} capability tests)", flush=True)
+
+    # SMOKE: is the pipeline even working? Run before anything else, and
     # treat a failure as a distinct, more urgent signal than a capability
     # test failing — no point testing 8 capabilities if the plumbing's down.
     # Timeout is test-specific (SMOKE_TEST["timeout"], currently 900s),
@@ -647,8 +684,7 @@ def main():
     baseline_scores = _code_capability_scores()
 
     results = [smoke_eval]
-    # TODO(Task 4): replace with tier-aware selection via select_active_tier()
-    shuffled = random.sample(TIER_1_TESTS, len(TIER_1_TESTS))
+    shuffled = random.sample(active_tests, len(active_tests))
     halted_mid_run = False
 
     # Fully sequential: submit one test, wait for it to settle, only then
@@ -810,7 +846,7 @@ def main():
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_file = os.path.join(results_dir, f"run_{ts}.json")
     with open(out_file, "w") as f:
-        json.dump({"timestamp": ts, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
+        json.dump({"timestamp": ts, "tier": current_tier, "passed": passed, "total": len(results), "results": results}, f, indent=2, default=str)
     print(f"\nResults saved: tests/results/run_{ts}.json")
 
     # Job cleanup (kubectl delete on success) is handled by the wrapping shell

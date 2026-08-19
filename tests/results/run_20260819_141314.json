@@ -1,0 +1,65 @@
+{
+  "timestamp": "20260819_141314",
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "score": 0.5,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "56acf0bd",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "score": 0.5,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "c7103cc9",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "score": 0.75,
+      "attempt": 1,
+      "issues": [
+        "No docstring found"
+      ],
+      "task_id": "eb0bd767",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (1c7ce506): LLM call exceeded total budget of 900.0s"
+    }
+  ]
+}

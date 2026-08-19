@@ -119,15 +119,15 @@ curl -X POST http://localhost/api/halt/clear
 
 ## Autonomous testing
 
-A **CronJob** runs the test suite hourly inside the cluster. Full detail — including the finish-line definition and drafted tier-3 tests for after that — lives in [`tests/STRATEGY.md`](tests/STRATEGY.md); short version:
+A **CronJob** runs the test suite hourly inside the cluster. Full detail lives in [`tests/STRATEGY.md`](tests/STRATEGY.md); short version:
 
-- **Tier 0 — smoke test.** One trivial task ("print hello world"), always first. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X" — but the suite still continues for more signal rather than aborting.
-- **Tier 1 — capability coverage.** 8 tests, one per [assessor capability label](#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. Each retries once on failure, and failures trigger reflect, categorized by timeout / format / quality (plus a catch-all for anything uncategorized).
-- **Tier 2 — regression check.** Compares this run's average `code`-capability score against recent history in episodic memory (the same PVC agents write to). A real drop since the last skill revision — not just "missed today's threshold" — triggers a distinct `REGRESSION` reflect task.
+- **SMOKE.** One trivial task ("print hello world"), always run first regardless of which difficulty tier below is active. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X" — but the suite still continues for more signal rather than aborting.
+- **A difficulty ladder — `TIER_0_TESTS` → `TIER_1_TESTS` → `TIER_2_TESTS` → ...** — the same 8 [assessor capability labels](#ai-capability-labeling) (`CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION` — `SELF_IMPROVEMENT` doesn't fit the pass/fail shape), each tier strictly harder than the last. `TIER_0_TESTS` starts genuinely minimal; `TIER_1_TESTS` is today's original 8; `TIER_2_TESTS` is harder still, grounded in goals this swarm has actually been observed attempting historically, not invented difficulty. Only one tier runs per CronJob invocation — `check_plateau.py` reads the git-tracked run history *before* anything is submitted and promotes to the next tier automatically once the current one clears **10 consecutive clean runs** (`STREAK_TARGET`), no manual reconfiguration. The ladder is open-ended: adding a `TIER_3_TESTS` later is just appending a new list, no promotion-logic changes needed. Each test retries once on failure, and failures trigger reflect, categorized by timeout / format / quality (plus a catch-all for anything uncategorized).
+- **Regression check.** Compares this run's average `code`-capability score against recent history in episodic memory (the same PVC agents write to). A real drop since the last skill revision — not just "missed today's threshold" — triggers a distinct `REGRESSION` reflect task. Independent of the difficulty ladder above.
 
 All of this runs fully sequentially (one task submitted at a time, waiting for it to settle before the next — running them concurrently piled up enough simultaneous LLM calls to blow past Ollama's read timeout), and checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped, instead of cascading into a wall of 409s that reads as a false capability regression.
 
-Results are written to `tests/results/`, then cloned and pushed to a dedicated **`bot/test-results` branch — never `main` directly** (the bot racing a human's own push to `main` is exactly what happened once already; a human merges that branch in whenever they choose). The push step also runs [`check_plateau.py`](tests/check_plateau.py), which reports how many consecutive 8/8-pass runs have accumulated toward the finish line. The Job deletes itself only *after* the push completes, and only if every test passed — kept around for debugging on failure, with `backoffLimit: 1` so a systemic failure (e.g. Ollama under load) fails fast instead of retrying 7 times over ~2 hours.
+Results (tagged with which tier ran) are written to `tests/results/`, then cloned and pushed to a dedicated **`bot/test-results` branch — never `main` directly** (the bot racing a human's own push to `main` is exactly what happened once already; a human merges that branch in whenever they choose). The push step also runs [`check_plateau.py`](tests/check_plateau.py), which reports every tier's streak toward its own 10-consecutive-clean-run promotion, and publishes a summary to NATS KV so the currently-active tier and streak progress are visible on the dashboard too (the dashboard pod has no git credentials of its own to read the results history directly). The Job deletes itself only *after* the push completes, and only if every test passed — kept around for debugging on failure, with `backoffLimit: 1` so a systemic failure (e.g. Ollama under load) fails fast instead of retrying 7 times over ~2 hours.
 
 Trigger immediately:
 ```bash
@@ -195,12 +195,15 @@ scripts/
                           what used to be ad-hoc kubectl/nats investigation
 
 tests/
-  run_tests.py           self-improving test runner (submit → evaluate → reflect → retry)
-  check_plateau.py        tracks consecutive clean runs toward the tier-3 activation threshold
-  results/               JSON result files per run (pushed to git by the CronJob)
+  run_tests.py           self-improving test runner (submit → evaluate → reflect → retry);
+                         select_active_tier() picks TIER_0/1/2_TESTS based on run history
+  check_plateau.py        per-tier streak tracking + automatic promotion up the difficulty
+                         ladder; also publishes a status summary to NATS KV for the dashboard
+  results/               JSON result files per run, tagged with which tier ran
+                         (pushed to git by the CronJob)
 
 helm/cxp/
-  app/                   mirror of main.py / src/ / tests/run_tests.py — this copy
+  app/                   mirror of main.py / src/ / tests/run_tests.py+check_plateau.py — this copy
                          is what app-code.yaml actually bakes into ConfigMaps.
                          Kept manually in sync with the top-level copies; nothing
                          enforces that automatically, so edit both or diff before

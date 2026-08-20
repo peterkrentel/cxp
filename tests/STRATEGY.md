@@ -17,6 +17,16 @@ Everything runs fully sequentially (one submission at a time, waiting for it to 
 
 The runner also checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped entirely, rather than cascading into a wall of 409s that reads as a false capability regression.
 
+### Per-test result statuses
+
+`evaluate()` returns one of these `status` values per test; `main()`'s POST-RUN ANALYSIS groups on them to decide which reflect task (if any) to trigger:
+
+- **`PASS`** — validator passed and score met the test's threshold.
+- **`WARN`** — code/verify both completed, but either the validator rejected the artifact or the score fell short.
+- **`TIMEOUT`** — no result at all within the test's timeout. Genuinely unexplained: could be an overloaded Ollama instance, a hung LLM call, or anything else that leaves zero trace in `get_state()`'s packets.
+- **`PLANNER_FAILED`** — distinct from `TIMEOUT` on purpose. Found live 2026-08-20 (SECURITY_AWARENESS, task `563b0547`): a malformed/truncated LLM decomposition response makes planner.py's `_execute()` catch the `JSONDecodeError` and return with zero sub-tasks emitted — but `agent_shell.py` still marks that packet done and acks it (no exception was raised), so no code/verify packet is *ever* coming for that task_id. `wait_for_results()` now recognizes a done `plan` packet with zero spawned `code` packets and settles the task immediately instead of running out the full timeout — carrying the planner's own explanation forward as `evaluate()`'s `reason`/`issues`. In short: `TIMEOUT` means "we don't know why," `PLANNER_FAILED` means "the planner told us exactly why."
+- **`SKIPPED`** — the swarm halted mid-run; not a capability failure, just an aborted attempt.
+
 ## Why a ladder, not a fixed 8
 
 A single fixed set of 8 tests is a **good regression yardstick but a bad growth driver** — once the swarm reliably passes all 8, there's nothing left to *learn* from; it becomes a pure smoke/regression check. The ladder exists so the suite keeps teaching the swarm something after it clears the easy rung, without ever making the bar so hard on day one that nothing passes (which is what happened before this restructuring — see the [tiered test suite plan](../docs/superpowers/plans/2026-08-18-tiered-test-suite.md) for the original diagnosis).

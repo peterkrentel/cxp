@@ -1,0 +1,86 @@
+{
+  "timestamp": "20260820_141514",
+  "tier": 0,
+  "passed": 2,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "b63ff972"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "616b0671"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "6a849760",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "f6b7286f",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 16, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "f11304ed",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "No evidence of 'assert' in the artifact"
+      ],
+      "task_id": "cc2e1930",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (657bca48): LLM call exceeded total budget of 900.0s"
+    }
+  ]
+}

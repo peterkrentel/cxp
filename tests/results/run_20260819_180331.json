@@ -1,0 +1,83 @@
+{
+  "timestamp": "20260819_180331",
+  "tier": 0,
+  "passed": 4,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.9,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "20704bdb"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.9,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "23c49ab5"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "4334cc2f"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "attempt": 2,
+      "issues": [
+        "kind is None, expected 'Deployment'"
+      ],
+      "task_id": "77b64df2"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.95,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "05faf4cf"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.75,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f93145d1"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.9,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "90184d80"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.7,
+      "attempt": 2,
+      "issues": [
+        "Missing 'persistence' config",
+        "Missing 'resources' config"
+      ],
+      "task_id": "2255973b"
+    }
+  ]
+}

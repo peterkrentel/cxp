@@ -107,9 +107,12 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
             code_count = 0
             verify_seen = False
             verify_issues: list[str] = []
+            plan_done_output = None
             for p in packets:
                 if p.get("task_id") != task_id:
                     continue
+                if p.get("type") == "plan" and p.get("status") == "done":
+                    plan_done_output = p.get("output", "")
                 if p.get("type") == "code":
                     code_count += 1
                     if p.get("status") == "done" and p.get("output"):
@@ -124,6 +127,27 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
             if code_pkt and verify_seen:
                 results[task_id] = {**code_pkt, "score": best_score,
                                      "code_count": code_count, "verify_issues": verify_issues}
+                pending.discard(task_id)
+            elif plan_done_output is not None and code_count == 0:
+                # Planner finished but spawned nothing -- e.g. a malformed/
+                # truncated LLM decomposition response caught by planner.py's
+                # JSONDecodeError handler. agent_shell.py still marks that
+                # packet "done" and acks it (no exception was raised), so no
+                # code/verify packet is EVER coming for this task_id --
+                # waiting out the full timeout only hides why. Found live
+                # 2026-08-20 (SECURITY_AWARENESS, task 563b0547): the LLM
+                # answered, the plan packet completed, but its own output
+                # already said "No sub-tasks spawned" the whole time this
+                # was reported as a bare TIMEOUT. Settle now with the
+                # planner's own explanation instead.
+                results[task_id] = {
+                    "task_id": task_id,
+                    "decomposition_failed": True,
+                    "output": plan_done_output,
+                    "score": 0.0,
+                    "code_count": 0,
+                    "verify_issues": [],
+                }
                 pending.discard(task_id)
         if pending:
             time.sleep(5)
@@ -638,6 +662,25 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     label = test["label"]
     if not result:
         return {"label": label, "status": "TIMEOUT"}
+    if result.get("decomposition_failed"):
+        # Distinct from TIMEOUT on purpose -- this is not "we don't know
+        # what happened," it's "the planner told us exactly what happened"
+        # (see wait_for_results()'s decomposition_failed branch). Keeping
+        # the planner's own output as both `issues` and `reason` means the
+        # POST-RUN ANALYSIS section (which reads `reason` for anything not
+        # bucketed as TIMEOUT/wrong_format/low_score) surfaces the real
+        # cause in the reflect task it submits, instead of "unknown failure".
+        reason = result.get("output", "")
+        return {
+            "label": label,
+            "status": "PLANNER_FAILED",
+            "score": 0.0,
+            "score_was_missing": True,
+            "attempt": attempt,
+            "issues": [f"Planner produced no sub-tasks: {reason}"],
+            "reason": reason,
+            "task_id": result.get("task_id"),
+        }
     # `result.get("score") or 0` used to collapse "verifier genuinely scored
     # this 0.0" and "the score field was missing entirely" (e.g. an upstream
     # parsing failure) into the exact same value -- found live 2026-08-19

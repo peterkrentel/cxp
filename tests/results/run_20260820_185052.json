@@ -1,0 +1,97 @@
+{
+  "timestamp": "20260820_185052",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "b171a5fc"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 6, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "fbbb869b"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "8f4a4684"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "SyntaxError: unterminated string literal (detected at line 13) (<string>, line 13)"
+      ],
+      "task_id": "b3bc6b9d"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "9fcdd98e"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "kind is None, expected 'Deployment'"
+      ],
+      "task_id": "7b43ffa9"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "82aa372f"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "4d05138f"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "2594966d"
+    }
+  ]
+}

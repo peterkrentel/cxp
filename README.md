@@ -261,6 +261,7 @@ kind-config.yaml       kind cluster with ports 80, 443, 4222 mapped
 - **Reflect only maintains the `executor` skill** — planner/verifier skill files exist but nothing currently rewrites them.
 - **Small local models** (`qwen2.5:0.5b`/`1.5b`) occasionally emit malformed JSON or wrong-typed fields, especially from planner's sub-task decomposition. Three specific shapes found live are now handled gracefully instead of halting the swarm (a dead-subject capability default, malformed JSON syntax, list-shaped fields where a string was expected) — but this is closing known cases, not eliminating the underlying unreliability. A new malformed-output shape can still trigger the halt gate; that's expected, not a bug to chase on its own.
 - **The diagnostician only ever diagnoses, never resolves.** It writes a real diagnosis for every halt (root cause + suggested action, and whether the same failure class has recurred recently) but always leaves the halt for a human to clear — a deliberate choice, not a missing feature. Fixing an actual code defect still needs a human — or, per [`docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md`](docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md)'s addendum, a real coding-agent tier that doesn't exist yet.
+- **`make deploy` uses its own isolated Helm repo config**, not your machine's global one (`~/Library/Preferences/helm/repositories.yaml` on macOS). `helm dependency update` refreshes every repo registered wherever `HELM_REPOSITORY_CONFIG` points — left at the default, that means every *other* Helm repo you've ever added on this machine for unrelated projects gets a real network call on every single `make deploy`. The Makefile instead points `HELM_REPOSITORY_CONFIG` at a project-local, gitignored `helm/cxp/.helm-repos.yaml`, seeded by the `helm-repos` target with only this chart's actual 3 dependencies (nats, ollama-helm, traefik). If a `helm` command run outside `make` (e.g. directly at a shell) seems to be missing a repo, that's why — it's using your global config, not this one.
 
 ---
 
@@ -328,7 +329,7 @@ make deploy
 ## Make commands
 
 ```
-make deploy      sync src → Helm → install/upgrade
+make deploy      sync src → Helm → install/upgrade (uses this project's own isolated Helm repo config, see below)
 make reset       recreate kind cluster + deploy
 make test        run test suite locally
 make test-now    trigger in-cluster test CronJob immediately

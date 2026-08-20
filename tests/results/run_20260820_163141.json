@@ -1,0 +1,86 @@
+{
+  "timestamp": "20260820_163141",
+  "tier": 0,
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Spawned 3 sub-packets for task cd127f04"
+      ],
+      "reason": "Spawned 3 sub-packets for task cd127f04",
+      "task_id": "cd127f04"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Spawned 3 sub-packets for task 8276645d"
+      ],
+      "reason": "Spawned 3 sub-packets for task 8276645d",
+      "task_id": "8276645d"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Spawned 3 sub-packets for task a1b86fd5"
+      ],
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (c565ed05): ConnectTimeout('')",
+      "task_id": "a1b86fd5"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task f093684c: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 362)). No sub-tasks spawned."
+      ],
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (c565ed05): ConnectTimeout('')",
+      "task_id": "f093684c"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (c565ed05): ConnectTimeout('')"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (c565ed05): ConnectTimeout('')"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Spawned 3 sub-packets for task 8507fa2b"
+      ],
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (c565ed05): ConnectTimeout('')",
+      "task_id": "8507fa2b"
+    }
+  ]
+}

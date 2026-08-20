@@ -93,6 +93,52 @@ def strip_code_fence(text: str) -> str:
     return "\n".join(lines[1:end]).strip() if end is not None else text
 
 
+class _NDJSONReassembler:
+    """Reassembles Ollama's streamed NDJSON response, tolerant of a single
+    JSON object arriving split across more than one transport-level line.
+
+    Found live 2026-08-20: the previous version parsed each line from
+    aiter_lines() independently and silently discarded it on any
+    json.loads() failure (`except Exception: continue`, no log, no
+    trace). Under the real CPU contention this cluster runs Ollama
+    under, a JSON object splitting across two lines is plausible -- and
+    when it happened, that line's content was just gone, leaving a gap
+    in the reconstructed text. Several capability-test failures this
+    session ("Unterminated string", "Expecting ',' delimiter" in
+    downstream JSON; "unterminated string literal" in generated Python)
+    were read as the model being unreliable at structured output -- this
+    is what a dropped line in the middle of a string value actually
+    looks like, not a model capability ceiling.
+
+    feed() buffers across a parse failure and retries with the next
+    line appended, instead of dropping it.
+    """
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def feed(self, line: str) -> str | None:
+        """Returns the newly-completed token's content, or None if `line`
+        was blank or is still an incomplete fragment being buffered."""
+        if not line:
+            return None
+        candidate = self._pending + line if self._pending else line
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            self._pending = candidate
+            return None
+        self._pending = ""
+        return obj.get("message", {}).get("content", "")
+
+    @property
+    def leftover(self) -> str:
+        """Unparsed content still buffered when the stream ended -- a
+        real error (a genuinely dead connection, not just a benign
+        split), surfaced for logging instead of silently vanishing."""
+        return self._pending
+
+
 class AgentShell(ABC):
     """Deterministic wrapper around a non-deterministic LLM worker."""
 
@@ -709,26 +755,25 @@ class AgentShell(ABC):
             # thinking-stream show meaningless fragments like "s", "g", "4"
             # instead of readable progress.
             last_published_len = 0
+            reassembler = _NDJSONReassembler()
             async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
                 "model": OLLAMA_MODEL, "stream": True,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             }) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        token = json.loads(line).get("message", {}).get("content", "")
-                        if token:
-                            chunks.append(token)
-                            total_len += len(token)
-                            if total_len - last_published_len >= 30:
-                                new_text = "".join(chunks)[last_published_len:total_len]
-                                last_published_len = total_len
-                                await self._nc.publish(SUBJECT_THINKING,
-                                    json.dumps({"agent": self.agent_id, "text": new_text, "stream": True}).encode())
-                    except Exception:
-                        continue
+                    token = reassembler.feed(line)
+                    if token:
+                        chunks.append(token)
+                        total_len += len(token)
+                        if total_len - last_published_len >= 30:
+                            new_text = "".join(chunks)[last_published_len:total_len]
+                            last_published_len = total_len
+                            await self._nc.publish(SUBJECT_THINKING,
+                                json.dumps({"agent": self.agent_id, "text": new_text, "stream": True}).encode())
+            if reassembler.leftover:
+                log.error("[%s] LLM stream ended with unparsed content, discarding %d chars: %r",
+                          self.agent_id, len(reassembler.leftover), reassembler.leftover[:200])
             return "".join(chunks)
 
         try:

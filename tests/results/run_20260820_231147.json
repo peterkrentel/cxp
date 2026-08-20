@@ -1,0 +1,97 @@
+{
+  "timestamp": "20260820_231147",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "0c084f15"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "25eab064"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No evidence of 'assert' in the artifact"
+      ],
+      "task_id": "7a6112a7"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "d08bcad7"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "7b95a6c9"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.75,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "a64d589c"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while parsing a block mapping\n  in \"<unicode string>\", line 5, column 1:\n    values: {}\n    ^\nexpected <block end>, but found '<block mapping start>'\n  in \"<unicode string>\", line 8, column 3:\n      redis:\n      ^"
+      ],
+      "task_id": "6940bbce"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "SyntaxError: unterminated string literal (detected at line 14) (<string>, line 14)"
+      ],
+      "task_id": "5643e402"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "a19142fb"
+    }
+  ]
+}

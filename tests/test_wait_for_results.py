@@ -99,6 +99,40 @@ def test_settles_immediately_when_planner_spawns_zero_subtasks(monkeypatch):
     assert "malformed JSON" in results["t1"]["output"]
 
 
+def test_freshly_spawned_children_still_in_flight_is_not_a_decomposition_failure(monkeypatch):
+    """Found live 2026-08-20, minutes after the fix above shipped: a
+    genuinely healthy decomposition ("Spawned 3 sub-packets for task
+    cd127f04") got misreported as decomposition_failed anyway. Root cause:
+    code_count only counts packets that show up in get_state() at all, and
+    a packet only appears there once agent_shell.py's _handle_message()
+    publishes its *completion* -- a freshly-submitted child that hasn't
+    been picked up by an executor/verifier yet is invisible to code_count,
+    not just not-yet-done. So immediately after the plan packet completes,
+    code_count is legitimately 0 for a beat even when real children exist.
+    The check must key off the plan packet's own output text (which always
+    says "Spawned N sub-packets" or "Failed to decompose" / "Spawned 0
+    sub-packets") -- not on whether any child has finished executing yet."""
+    import tests.run_tests as rt
+
+    def fake_get_state():
+        # Plan just completed and reports 3 spawned sub-packets, but none
+        # of them have finished running yet -- this is the exact moment
+        # the false positive fired.
+        return {"packets": [
+            {"task_id": "t1", "type": "plan", "status": "done", "output": "Spawned 3 sub-packets for task t1"},
+        ]}
+
+    monkeypatch.setattr(rt, "get_state", fake_get_state)
+    monkeypatch.setattr(rt.time, "sleep", lambda s: None)
+
+    results = wait_for_results({"t1": {}}, timeout=1)
+
+    # Must NOT settle as a decomposition failure -- and since no code/verify
+    # has completed yet either, it should just run out this short timeout
+    # with no result at all (the correct "still working" outcome).
+    assert "t1" not in results
+
+
 def test_plan_done_with_children_is_not_treated_as_decomposition_failure(monkeypatch):
     """A real, healthy run also publishes a done 'plan' packet (alongside
     code/verify) -- must not be misread as the zero-subtasks failure case

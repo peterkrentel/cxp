@@ -128,7 +128,10 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
                 results[task_id] = {**code_pkt, "score": best_score,
                                      "code_count": code_count, "verify_issues": verify_issues}
                 pending.discard(task_id)
-            elif plan_done_output is not None and code_count == 0:
+            elif plan_done_output is not None and (
+                plan_done_output.startswith("Failed to decompose")
+                or plan_done_output.startswith("Spawned 0 sub-packets")
+            ):
                 # Planner finished but spawned nothing -- e.g. a malformed/
                 # truncated LLM decomposition response caught by planner.py's
                 # JSONDecodeError handler. agent_shell.py still marks that
@@ -140,6 +143,18 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
                 # already said "No sub-tasks spawned" the whole time this
                 # was reported as a bare TIMEOUT. Settle now with the
                 # planner's own explanation instead.
+                #
+                # Deliberately keyed off the plan packet's own output text,
+                # NOT `code_count == 0` -- code_count only counts packets
+                # that have themselves already *completed* (get_state()'s
+                # packets only ever include a completion broadcast, see
+                # agent_shell.py's _handle_message()). A freshly-spawned
+                # child that hasn't been picked up yet is invisible to
+                # code_count for a beat even on a perfectly healthy
+                # decomposition -- found live 2026-08-20, minutes after an
+                # earlier version of this fix (keyed off code_count == 0)
+                # shipped: a real "Spawned 3 sub-packets" decomposition got
+                # misreported as a failure anyway, purely from that race.
                 results[task_id] = {
                     "task_id": task_id,
                     "decomposition_failed": True,

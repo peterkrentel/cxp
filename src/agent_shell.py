@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -107,6 +108,14 @@ class AgentShell(ABC):
         self._nc: NATSClient | None = None
         self._memory = get_store()
         self._kv_cache: dict[str, object] = {}
+        # packet_id -> in-flight NATS msg, for every packet this replica is
+        # genuinely still processing right now (added on claim, removed the
+        # moment _mark_packet_done() runs -- see _handle_message). Lets a
+        # SIGTERM handler in run() hand every one of them back immediately
+        # via _release_for_shutdown() instead of leaving the next claimant
+        # to wait out INFLIGHT_STALE_SECONDS, a timer sized for a crash with
+        # zero warning, not a routine rolling restart.
+        self._active_messages: dict[str, object] = {}
 
     async def connect(self) -> None:
         self._nc = await nats.connect(NATS_URL)
@@ -436,6 +445,7 @@ class AgentShell(ABC):
             return
 
         packet.claim(self.agent_id)
+        self._active_messages[packet.id] = msg
         await self._emit_status("working", packet)
 
         # Tell JetStream "still alive" every 90s (well under ack_wait's
@@ -507,12 +517,69 @@ class AgentShell(ABC):
         # that this packet is finished is durably recorded no matter what
         # happens to publish/ack afterward.
         await self._mark_packet_done(packet.id)
+        # Popped here, not after ack() -- _release_for_shutdown() only ever
+        # touches packets still in this dict, and a packet is only ever
+        # genuinely still "in progress" up to this exact line.
+        self._active_messages.pop(packet.id, None)
         await self._publish(SUBJECT_RESULTS, packet)
         await self._emit_status("idle")
         await msg.ack()
 
+    async def _release_for_shutdown(self) -> None:
+        """Called from a SIGTERM handler in run() -- a graceful pod
+        termination (e.g. mid-rollout during `make deploy`) gets a real
+        termination grace period to hand back any in-flight claim, unlike
+        a hard crash with zero warning. For every packet this replica is
+        still genuinely processing: nak the message so JetStream
+        redelivers it right away (instead of waiting out ack_wait), and
+        delete its KV_INFLIGHT claim so the redelivered copy is claimable
+        immediately rather than read as still-in-progress.
+
+        Found live 2026-08-20: without this, recovery from a claim-holder
+        killed by a routine rolling restart had to wait out the full
+        INFLIGHT_STALE_SECONDS (960s) -- a timer deliberately sized for a
+        crash with no warning at all, not a planned shutdown. The test
+        harness's own per-test timeout (900s) is shorter than that, so
+        the gap reliably surfaced as a false TIMEOUT on whichever test
+        happened to be in flight during a deploy.
+
+        Safe even if this process's own _execute() finishes anyway before
+        SIGKILL and tries to complete normally afterward -- the
+        idempotency fence already tolerates two replicas briefly
+        processing the same packet (see _claim_packet's and
+        _mark_packet_done's own docstrings)."""
+        kv = await self._kv(KV_INFLIGHT)
+        for packet_id, msg in list(self._active_messages.items()):
+            try:
+                await msg.nak()
+            except Exception as exc:
+                log.error("[%s] nak failed for %s during shutdown: %r", self.agent_id, packet_id[:8], exc)
+            self._active_messages.pop(packet_id, None)
+            try:
+                await kv.delete(packet_id)
+            except Exception as exc:
+                log.error("[%s] claim release failed for %s during shutdown: %r", self.agent_id, packet_id[:8], exc)
+
     async def run(self) -> None:
         await self.connect()
+
+        # Kubernetes sends SIGTERM before SIGKILL on a routine pod
+        # termination (rolling restart, scale-down) and waits out a grace
+        # period -- real time to hand back any in-flight claim cleanly via
+        # _release_for_shutdown(), rather than leaving the next claimant to
+        # wait out INFLIGHT_STALE_SECONDS as if this were an unannounced
+        # crash. shutdown_event decouples "signal received" from "actually
+        # released" so the handler itself stays a plain, fast callback.
+        shutdown_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, shutdown_event.set)
+
+        async def _shutdown_watcher() -> None:
+            await shutdown_event.wait()
+            log.info("[%s] SIGTERM received -- releasing in-flight claims", self.agent_id)
+            await self._release_for_shutdown()
+
+        asyncio.create_task(_shutdown_watcher())
 
         # Each capability gets its own capability-routed subject with a durable
         # JetStream consumer — `durable` + `queue` gives the same "replicas

@@ -62,22 +62,37 @@ class PlannerAgent(AgentShell):
             return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
         for task in sub_tasks:
-            type_str = task.get("type", "code")
+            raw_type = task.get("type", "code")
             # capability routes to cxp.cap.<capability>, and only code/verify/
             # reflect have a subscribed consumer. task.get(..., "any") used to
             # be the fallback here — "any" has no consumer, so a sub-task
             # missing this field was published successfully and then silently
             # lost forever (no error, no halt, just gone). Falling back to
-            # type_str keeps the packet routable; the model is already told
-            # capability must match type, so this is the same value it should
-            # have provided anyway.
-            capability = task.get("capability") or type_str
+            # raw_type keeps the packet routable when capability is absent
+            # entirely.
+            capability = task.get("capability") or raw_type
             if capability not in ("code", "verify", "reflect"):
                 capability = "code"
-            # PacketType(type_str) below also raises if the model invents a
-            # type outside PacketType's enum -- wrapped in the same try so
-            # neither that nor any other unexpected shape from this one
-            # sub-task can crash the whole decomposition.
+            # type is derived from the now-validated capability, not trusted
+            # as the model's own separate raw "type" field -- found live
+            # 2026-08-20: the model emitted capability="code" (correct, and
+            # what real routing used -- the executor produced real code,
+            # verified at a genuine 0.9) but type="verify" for that same
+            # sub-task. Nothing caught the mismatch, since "verify" is a
+            # perfectly valid PacketType member -- the try/except below
+            # only guards against an invented type outside the enum
+            # entirely, not a valid-but-inconsistent one. wait_for_results()
+            # keys off packet *type* == "code" to know a task produced an
+            # artifact; a type="verify" packet is invisible to that check
+            # forever, so a genuinely completed task times out. capability
+            # is already clamped to a known-safe 3-value set two lines up;
+            # type should always agree with it, not be independently
+            # model-supplied.
+            type_str = capability
+            # The try/except below still guards other unexpected shapes
+            # from this one sub-task (e.g. other malformed fields) from
+            # crashing the whole decomposition, even though type_str can no
+            # longer itself be an invalid PacketType value.
             try:
                 child = CXPPacket(
                     origin=self.agent_id,

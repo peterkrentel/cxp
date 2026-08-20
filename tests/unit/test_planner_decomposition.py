@@ -83,9 +83,38 @@ async def test_list_valued_goal_field_is_coerced_not_crashed_on(monkeypatch):
     assert "Spawned 1 sub-packets" in result
 
 
+async def test_type_is_derived_from_the_validated_capability_not_trusted_raw(monkeypatch):
+    # Found live 2026-08-20: the model emitted capability="code" but
+    # type="verify" for a sub-task that WAS the real code-writing step (its
+    # own goal/instructions were unambiguously about writing code, and the
+    # executor it routed to -- via capability -- produced real code output,
+    # verified at a real 0.9 score). Only `capability` is validated against
+    # the known-safe set (code/verify/reflect); `type` was trusted as-is
+    # from the model's own output, so it silently disagreed with capability.
+    # Downstream, wait_for_results() keys off packet *type* == "code" to
+    # decide a task produced an artifact -- a type="verify" packet is
+    # invisible to that check forever, so the task times out even though
+    # the swarm already finished it successfully.
+    sub_tasks = [{"type": "verify", "capability": "code", "goal": "write a function", "instructions": "do it"}]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+
+    await p._execute(_goal_packet())
+
+    emitted.assert_awaited_once()
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.capability == "code"
+    assert child.type == PacketType.CODE  # derived from capability, not the model's raw "type"
+
+
 async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
+    # Non-numeric priority is still a genuine construction failure (raised
+    # by int(task.get("priority", ...)) inside the try) -- an invalid
+    # *type* string is no longer one, now that type is derived from the
+    # already-validated capability rather than trusted from the model
+    # directly (see test_type_is_derived_from_the_validated_capability_
+    # not_trusted_raw above).
     sub_tasks = [
-        {"type": "not-a-real-type", "capability": "code", "goal": "bad", "instructions": "x"},
+        {"type": "code", "capability": "code", "priority": "not-a-number", "goal": "bad", "instructions": "x"},
         {"type": "code", "capability": "code", "goal": "good one", "instructions": "y"},
     ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))

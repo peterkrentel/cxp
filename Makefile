@@ -2,13 +2,28 @@ NAMESPACE  = cxp
 RELEASE    = cxp
 CHART      = helm/cxp
 
-.PHONY: deploy sync destroy reset submit dashboard logs web cluster
+# Isolated Helm repo config, scoped to just this project's 3 dependencies
+# (nats, ollama-helm, traefik) -- without this, `helm dependency update`
+# refreshes every repo registered globally on the machine (kyverno, istio,
+# grafana, etc. from unrelated projects), making real network calls to
+# repos cxp has nothing to do with on every single deploy.
+export HELM_REPOSITORY_CONFIG := $(CURDIR)/$(CHART)/.helm-repos.yaml
+
+.PHONY: deploy sync destroy reset submit dashboard logs web cluster helm-repos
 
 # Sync src → Helm chart, install/upgrade — access via http://localhost
-deploy: sync
+deploy: sync helm-repos
 	helm dependency update $(CHART)
 	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace
 	@echo "✓ Access: http://localhost"
+
+# Ensure the isolated repo config (above) has exactly this chart's
+# dependencies registered. Idempotent -- re-adding an already-present repo
+# at the same URL is a silent no-op.
+helm-repos:
+	@helm repo add nats https://nats-io.github.io/k8s/helm/charts/ >/dev/null 2>&1 || true
+	@helm repo add ollama-helm https://otwld.github.io/ollama-helm/ >/dev/null 2>&1 || true
+	@helm repo add traefik https://traefik.github.io/charts >/dev/null 2>&1 || true
 
 # Sync src files into Helm ConfigMaps
 sync:

@@ -39,9 +39,16 @@ ollama:
   # Shrunk from 5 CPU/4Gi now that assessor's 0.5b load moves to its own
   # instance below — total demand across both stays about the same instead
   # of just adding a second full allocation on top.
+  #
+  # Limits raised ~35% (3.5->4.75 CPU, 3->4Gi) 2026-08-20: node has real
+  # spare capacity (10 cores, observed at 2% utilization) -- the 3.5-core
+  # ceiling was the actual binding constraint behind a real halt (assessor
+  # LLM call hit the full 900s budget while pegged at this limit, node
+  # otherwise idle). Requests unchanged -- observed idle usage is 1-8m,
+  # the existing request floor was never the issue.
   resources:
     requests: { cpu: "1.5", memory: "1.5Gi" }
-    limits:   { cpu: "3.5", memory: "3Gi" }
+    limits:   { cpu: "4.75", memory: "4Gi" }
   extraEnv:
     - { name: OLLAMA_NUM_PARALLEL, value: "2" }   # default 4 — halves per-runner thread footprint within the new CPU budget
 
@@ -62,9 +69,11 @@ ollama-small:
   persistentVolume:
     enabled: true
     size: 4Gi   # only ever holds the one small model
+  # Limits raised ~35% alongside the main instance above (1.5->2 CPU,
+  # 1.5->2Gi) 2026-08-20 -- same reasoning, real spare node capacity.
   resources:
     requests: { cpu: "0.5", memory: "0.5Gi" }
-    limits:   { cpu: "1.5", memory: "1.5Gi" }
+    limits:   { cpu: "2", memory: "2Gi" }
 
 ## --------------------------------------------------------------------------- #
 ## NATS sub-chart overrides                                                     #

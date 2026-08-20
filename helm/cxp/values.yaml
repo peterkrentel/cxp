@@ -51,6 +51,16 @@ ollama:
     limits:   { cpu: "4.75", memory: "4Gi" }
   extraEnv:
     - { name: OLLAMA_NUM_PARALLEL, value: "2" }   # default 4 — halves per-runner thread footprint within the new CPU budget
+  # Never got the same surge-before-kill fix agents.yaml's Deployments got
+  # in #47 -- found live 2026-08-20: bumping the resource limits above
+  # forced a restart, the old pod was killed before the new one was ready
+  # (default 25%/25% rounds to 0 surge for a single replica), and reflect's
+  # in-flight call hit a real ConnectTimeout mid-gap, halting the swarm.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
 
 ## --------------------------------------------------------------------------- #
 ## Ollama sub-chart overrides — small instance (assessor only, qwen2.5:0.5b).
@@ -74,6 +84,13 @@ ollama-small:
   resources:
     requests: { cpu: "0.5", memory: "0.5Gi" }
     limits:   { cpu: "2", memory: "2Gi" }
+  # Same surge-before-kill fix as the main instance above -- see its
+  # comment for the live incident this closes.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
 
 ## --------------------------------------------------------------------------- #
 ## NATS sub-chart overrides                                                     #

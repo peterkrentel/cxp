@@ -1,0 +1,100 @@
+{
+  "timestamp": "20260820_223134",
+  "tier": 0,
+  "passed": 4,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task d3ca3db8: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 283)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task d3ca3db8: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 283)). No sub-tasks spawned.",
+      "task_id": "d3ca3db8"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "d089c49a"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "731c3ccd"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.85,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "43781e03"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: apps/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 29, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "f348cbfb"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "498fcec0"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.75,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Missing 'resources' config"
+      ],
+      "task_id": "3d0fb39f"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "109421e6"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "b7769304"
+    }
+  ]
+}

@@ -121,6 +121,21 @@ spec:
             {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
             - { name: PATH,           value: "/shared-bin:/usr/local/bin:/usr/bin:/bin" }
             {{- end }}
+            {{- if $.Values.otel.enabled }}
+            # Gated behind otel.enabled (default false, see values.yaml) --
+            # the auth header lives in a Secret the user creates themselves
+            # out-of-band (kubectl create secret, never committed/pasted
+            # into chat), so this only activates once that Secret actually
+            # exists. init_tracing() (telemetry.py) is a no-op if
+            # OTEL_EXPORTER_OTLP_ENDPOINT is unset, so leaving this whole
+            # block off by default is a genuine no-op, not degraded mode.
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "{{ $.Values.otel.endpoint }}" }
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $.Values.otel.secretName }}"
+                  key: headers
+            {{- end }}
           resources:
             # requests were 100m -- real observed usage all night was 1-2m
             # per pod (these are lightweight asyncio processes; the LLM

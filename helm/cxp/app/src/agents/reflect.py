@@ -40,7 +40,7 @@ class ReflectAgent(AgentShell):
             f"Failure report:\n{packet.payload.instructions}\n\n"
             f"Failed artifact context:\n{packet.payload.context[:800]}"
         )
-        improved = await self.llm(SYSTEM, prompt)
+        improved = await self.llm(SYSTEM, prompt, packet_id=packet.id)
 
         # JetStream KV versions every put() with an atomic revision number —
         # no separate .bak/glob bookkeeping needed, and no race between

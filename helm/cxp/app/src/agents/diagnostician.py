@@ -172,7 +172,7 @@ class DiagnosticianAgent(AgentShell):
         instead of letting the failure cascade into the generic crash
         handler and become a second, unrelated halt."""
         try:
-            raw = strip_code_fence(await self.llm(BASE_SYSTEM, prompt))
+            raw = strip_code_fence(await self.llm(BASE_SYSTEM, prompt, packet_id=packet.id))
             return json.loads(raw, strict=False)
         except json.JSONDecodeError as exc:
             return {

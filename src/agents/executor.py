@@ -26,7 +26,7 @@ class ExecutorAgent(AgentShell):
             f"Goal: {packet.payload.goal}\n\n"
             f"Context:\n{packet.payload.context}"
         )
-        output = await self.llm(BASE_SYSTEM + skill, prompt)
+        output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
 
         # spawn a verify packet automatically — skill_revision rides along in
         # `inputs` so verifier can log which skill version produced this

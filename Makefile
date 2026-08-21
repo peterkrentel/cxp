@@ -11,10 +11,18 @@ export HELM_REPOSITORY_CONFIG := $(CURDIR)/$(CHART)/.helm-repos.yaml
 
 .PHONY: deploy sync destroy reset submit dashboard logs web cluster helm-repos
 
+# Local, gitignored overrides (e.g. otel.enabled=true) -- kept out of the
+# committed values.yaml on purpose, since CI's ephemeral cluster has no
+# matching Secret (cxp-otel-credentials) and would fail to deploy if that
+# default were ever flipped on there. Applied last, so it wins over the
+# chart's own defaults, only when the file actually exists.
+LOCAL_VALUES := $(CHART)/values.local.yaml
+LOCAL_VALUES_FLAG := $(if $(wildcard $(LOCAL_VALUES)),-f $(LOCAL_VALUES))
+
 # Sync src → Helm chart, install/upgrade — access via http://localhost
 deploy: sync helm-repos
 	helm dependency update $(CHART)
-	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace
+	helm upgrade --install $(RELEASE) $(CHART) --namespace $(NAMESPACE) --create-namespace $(LOCAL_VALUES_FLAG)
 	@echo "✓ Access: http://localhost"
 
 # Ensure the isolated repo config (above) has exactly this chart's

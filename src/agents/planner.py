@@ -42,7 +42,8 @@ class PlannerAgent(AgentShell):
         # fetched per-task (not at import time) so a reflect update is picked
         # up on the very next task, from every replica, without a pod restart
         skill = await self.get_skill("planner", fallback_path="/skills/planner_v1.md")
-        raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}")
+        raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}",
+                              packet_id=packet.id)
 
         raw = strip_code_fence(raw)
         # strict=False: small local models sometimes emit a literal unescaped

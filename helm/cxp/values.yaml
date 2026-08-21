@@ -145,6 +145,28 @@ webService:
   port: 8080
 
 ## --------------------------------------------------------------------------- #
+## OpenTelemetry -- every LLM call's full input/output as a span, exported
+## via OTLP straight to Grafana Cloud (no in-cluster collector needed).
+## Added 2026-08-21 after repeatedly finding a since-restarted pod's
+## kubectl logs already gone while chasing an LLM failure -- this ships
+## off-cluster the moment a span finishes, so it survives that.
+##
+## `enabled: false` by default -- flip to true only after creating the
+## Secret this depends on (endpoint below is not itself secret, but the
+## auth header is, and must never be committed or pasted into a chat):
+##
+##   kubectl create secret generic cxp-otel-credentials -n cxp \
+##     --from-literal=headers="Authorization=Basic <base64 of instanceID:token>"
+##
+## (instanceID:token and the base64 encoding come from your Grafana Cloud
+## stack's own "OpenTelemetry (OTLP)" setup page.)
+## --------------------------------------------------------------------------- #
+otel:
+  enabled: false
+  endpoint: "https://otlp-gateway-prod-us-east-3.grafana.net/otlp"
+  secretName: cxp-otel-credentials
+
+## --------------------------------------------------------------------------- #
 agents:
   planner:
     replicas: 1

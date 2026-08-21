@@ -21,6 +21,11 @@ def main() -> None:
     )
     role = sys.argv[1] if len(sys.argv) > 1 else "dashboard"
 
+    # No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (see telemetry.py) --
+    # safe to call unconditionally on every process, every role.
+    from src.telemetry import init_tracing
+    init_tracing(f"cxp-{role}")
+
     if role == "planner":
         from src.agents.planner import PlannerAgent
         asyncio.run(PlannerAgent().run())

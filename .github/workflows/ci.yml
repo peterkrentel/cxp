@@ -20,6 +20,41 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  # deploy-check spins up a full kind cluster (2-8 min) -- worth skipping
+  # when nothing that actually affects a live deploy changed (docs, CI
+  # workflow files, unit tests, test-results JSON). Caught live 2026-08-21:
+  # a PR touching only .github/workflows/*.yml still ran the full kind
+  # cluster for no reason. unit-tests stays unconditional -- it's ~15s,
+  # not worth the same treatment.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      deploy_relevant: ${{ steps.filter.outputs.deploy_relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          changed=$(git diff --name-only "$base" "${{ github.sha }}")
+          echo "Changed files:"
+          echo "$changed"
+          # Anything that actually gets baked into a pod (Helm templates/
+          # values, app code baked into ConfigMaps, its own dependencies)
+          # or is deploy-check's own workflow definition.
+          if echo "$changed" | grep -qE '^(helm/|src/|main\.py$|requirements\.txt$|tests/run_tests\.py$|tests/check_plateau\.py$|scripts/sandbox_reaper\.py$|skills/|\.github/workflows/ci\.yml$)'; then
+            echo "deploy_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -37,6 +72,8 @@ jobs:
         run: pytest tests/unit -v
 
   deploy-check:
+    needs: changes
+    if: needs.changes.outputs.deploy_relevant == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

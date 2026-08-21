@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import time
 import uuid
@@ -92,6 +93,31 @@ def strip_code_fence(text: str) -> str:
             end = i
             break
     return "\n".join(lines[1:end]).strip() if end is not None else text
+
+
+_TRAILING_COMMA_RE = re.compile(r",(\s*[\]}])")
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Small local models frequently write a trailing comma after the last
+    property in an object, or the last element in an array -- legal in
+    Python dict/list literals, invalid in strict JSON.
+
+    Found live 2026-08-21 via a full OTel span capture (see
+    docs/otel-setup.md, packet dcb5043e): a genuinely complete,
+    well-formed decomposition response failed to parse purely because of
+    two trailing commas. Before that span existed, this was
+    indistinguishable from "the response is malformed/truncated" -- with
+    the full text visible, it's neither.
+
+    A no-op on already-valid JSON, so always safe to apply before
+    parsing. Regex-based, not a full JSON tokenizer -- could in theory
+    mis-strip a comma that appears (already followed by an unescaped
+    `]`/`}`) inside a string value. Accepted tradeoff: that exact
+    sequence inside a string value is rare in practice, and this pattern
+    is common enough in real failures to be worth fixing broadly.
+    """
+    return _TRAILING_COMMA_RE.sub(r"\1", text)
 
 
 class _NDJSONReassembler:

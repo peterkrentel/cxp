@@ -1,0 +1,84 @@
+{
+  "timestamp": "20260821_093001",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 40f459c0: malformed JSON from model (Expecting property name enclosed in double quotes: line 10 column 5 (char 309)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 40f459c0: malformed JSON from model (Expecting property name enclosed in double quotes: line 10 column 5 (char 309)). No sub-tasks spawned.",
+      "task_id": "40f459c0"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "b5cd3ff1"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No evidence of 'assert' in the artifact"
+      ],
+      "task_id": "3b8789fd"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "5e978d6c"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "8d9cc75f"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f0e33618"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f6538178"
+    }
+  ]
+}

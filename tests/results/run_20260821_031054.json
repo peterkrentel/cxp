@@ -1,0 +1,96 @@
+{
+  "timestamp": "20260821_031054",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "629c38bd"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "c14732f3"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "2ffc5184"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f5a8fd93"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "6ffc628f"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: networking.k8s.io/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 18, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "e579a008"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 4, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "3be52d9b"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task e2ec5ec4: malformed JSON from model (Expecting ',' delimiter: line 8 column 52 (char 327)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task e2ec5ec4: malformed JSON from model (Expecting ',' delimiter: line 8 column 52 (char 327)). No sub-tasks spawned.",
+      "task_id": "e2ec5ec4"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "ce3b4eec"
+    }
+  ]
+}

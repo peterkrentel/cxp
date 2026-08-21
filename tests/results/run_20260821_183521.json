@@ -1,0 +1,92 @@
+{
+  "timestamp": "20260821_183521",
+  "tier": 0,
+  "passed": 4,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0.85,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "SyntaxError: invalid syntax (<string>, line 4)"
+      ],
+      "task_id": "4685c61d"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "5f259a63"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 29, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "9e60e69a"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.4,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 4, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "d5b64a68"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "063b4664"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "aadc68c8"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "3b864f02"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "a80b37ce"
+    }
+  ]
+}

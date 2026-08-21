@@ -37,7 +37,7 @@ class VerifierAgent(AgentShell):
             f"Original goal: {packet.payload.goal}\n\n"
             f"Artifact to verify:\n{packet.payload.context}"
         )
-        raw = await self.llm(BASE_SYSTEM + skill, prompt)
+        raw = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
         raw = strip_code_fence(raw)
 
         # Better error handling for JSON parsing. strict=False: tolerate a

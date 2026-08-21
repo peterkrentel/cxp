@@ -38,7 +38,7 @@ class AssessorAgent(AgentShell):
             f"Task goal: {goal}\n\n"
             f"Generated artifact:\n{artifact[:2000]}"
         )
-        raw = await self.llm(SYSTEM, prompt)
+        raw = await self.llm(SYSTEM, prompt, packet_id=packet.id)
         raw = strip_code_fence(raw)
 
         try:

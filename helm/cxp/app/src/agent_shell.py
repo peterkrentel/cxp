@@ -19,6 +19,7 @@ from nats.js.errors import BadRequestError, NotFoundError
 
 from .memory import get_store
 from .packet import CXPPacket, PacketStatus, PacketType, Payload
+from .telemetry import get_tracer, record_llm_call
 
 log = logging.getLogger(__name__)
 
@@ -698,10 +699,17 @@ class AgentShell(ABC):
         await self._nc.publish(SUBJECT_THINKING,
             json.dumps({"agent": self.agent_id, "text": text}).encode())
 
-    async def llm(self, system: str, user: str) -> str:
+    async def llm(self, system: str, user: str, packet_id: str | None = None) -> str:
         """Call Ollama with streaming. Auto-pull is disabled (see below) — a
-        missing model raises RuntimeError rather than silently pulling."""
+        missing model raises RuntimeError rather than silently pulling.
+
+        packet_id is optional (some callers don't have one in scope) and
+        only used to tag the OTel span below for later lookup -- it has
+        no effect on the call itself."""
         import httpx
+
+        tracer = get_tracer(__name__)
+        call_start = time.time()
 
         # connect=10s, write=10s, NO per-chunk read limit (see below) --
         # LLM_TOTAL_TIMEOUT is the one and only "how long is too long"
@@ -744,8 +752,15 @@ class AgentShell(ABC):
 
         await self._think(f"  ⟳ LLM ({len(user)} chars): {user[:120]}…")
 
+        # Declared here, not inside _stream() -- so a timeout (below) still
+        # leaves whatever content had actually been generated so far
+        # readable for the telemetry span. asyncio.wait_for() cancels the
+        # _stream() coroutine on timeout; a list local to that closure
+        # would be unreachable afterward, but mutating (not rebinding) a
+        # list from the enclosing scope survives the cancellation fine.
+        chunks: list[str] = []
+
         async def _stream(client: httpx.AsyncClient) -> str:
-            chunks: list[str] = []
             total_len = 0
             # Publishes the actual text generated since the last update, not
             # just whichever single token happened to cross the 30-char
@@ -776,26 +791,41 @@ class AgentShell(ABC):
                           self.agent_id, len(reassembler.leftover), reassembler.leftover[:200])
             return "".join(chunks)
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                try:
-                    full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
-                except asyncio.TimeoutError:
-                    raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        raise RuntimeError(
-                            f"Model '{OLLAMA_MODEL}' not found in Ollama. "
-                            f"Available models must be pre-cached in PVC. "
-                            f"Auto-pull is disabled to prevent PostStartHook failures."
-                        )
-                    raise
-        finally:
-            # Released on every exit path, success or failure, so a request
-            # that errors doesn't leak its slot -- OLLAMA_SLOT_STALE_SECONDS
-            # is the backstop for a pod that gets killed outright and never
-            # reaches this finally block at all.
-            await self.release_ollama_slot(OLLAMA_URL, claim_id)
+        with tracer.start_as_current_span("llm.call") as span:
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    try:
+                        full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
+                        record_llm_call(span, agent_id=self.agent_id, packet_id=packet_id,
+                                         system=system, user=user, timed_out=False,
+                                         response=full, duration_seconds=time.time() - call_start)
+                        return full
+                    except asyncio.TimeoutError:
+                        # chunks (outer scope, see above) still holds
+                        # whatever content had actually been generated up
+                        # to the moment the budget ran out -- captured here
+                        # instead of discarded, so it's possible to tell
+                        # "generating something reasonable that just needed
+                        # more time" apart from "stuck looping / garbage,"
+                        # neither of which was distinguishable before this.
+                        record_llm_call(span, agent_id=self.agent_id, packet_id=packet_id,
+                                         system=system, user=user, timed_out=True,
+                                         response="".join(chunks), duration_seconds=time.time() - call_start)
+                        raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            raise RuntimeError(
+                                f"Model '{OLLAMA_MODEL}' not found in Ollama. "
+                                f"Available models must be pre-cached in PVC. "
+                                f"Auto-pull is disabled to prevent PostStartHook failures."
+                            )
+                        raise
+            finally:
+                # Released on every exit path, success or failure, so a request
+                # that errors doesn't leak its slot -- OLLAMA_SLOT_STALE_SECONDS
+                # is the backstop for a pod that gets killed outright and never
+                # reaches this finally block at all.
+                await self.release_ollama_slot(OLLAMA_URL, claim_id)
 
         await self._think(f"  ✓ response ({len(full)} chars): {full[:120]}…")
         return full

@@ -1,0 +1,100 @@
+{
+  "timestamp": "20260821_064853",
+  "tier": 0,
+  "passed": 3,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task c9d16a9f: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 252)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task c9d16a9f: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 252)). No sub-tasks spawned.",
+      "task_id": "c9d16a9f"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 22, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "2ad353b6"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Missing 'resources' config"
+      ],
+      "task_id": "1ace478c"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "WARN",
+      "score": 0.3,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "f9588746"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.95,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "74e5f7c0"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "ba5ee67a"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "737ffc46"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "80976732"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No evidence of 'assert' in the artifact"
+      ],
+      "task_id": "250b40b5"
+    }
+  ]
+}

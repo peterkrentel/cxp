@@ -1,0 +1,59 @@
+{
+  "timestamp": "20260821_185422",
+  "tier": 0,
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "SyntaxError: unterminated string literal (detected at line 4) (<string>, line 4)"
+      ],
+      "task_id": "2d651d85"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: assessor-1 failed on assess (29b9730b): LLM call exceeded total budget of 900.0s"
+    }
+  ]
+}

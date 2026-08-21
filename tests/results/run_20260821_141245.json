@@ -1,0 +1,96 @@
+{
+  "timestamp": "20260821_141245",
+  "tier": 0,
+  "passed": 6,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "57bf9dbc"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "6839e1b3"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Missing 'resources' config"
+      ],
+      "task_id": "03cd1a4a"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "cdc6989d"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "2b58c5ba"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "b6fd8b99"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.75,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "b872f1c2"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "b095fd5a"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 3efc9dac: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 421)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 3efc9dac: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 421)). No sub-tasks spawned.",
+      "task_id": "3efc9dac"
+    }
+  ]
+}

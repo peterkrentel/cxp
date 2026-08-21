@@ -1,0 +1,50 @@
+name: Auto-merge test results
+
+# The hourly test-runner CronJob pushes to bot/test-results, never main
+# directly (see helm/cxp/templates/test-runner.yaml's own comment) --
+# that split exists because the bot racing a human's own push straight to
+# main caused a real incident once already. This workflow doesn't touch
+# that: it still never pushes to main itself. It opens/updates a PR and
+# lets GitHub's own merge API do the merge, which detects a genuine
+# conflict instead of silently clobbering anything the way a second raw
+# push could -- the actual property the original fix needed, not "no
+# automation at all". Same CI (unit-tests/deploy-check) gates this PR as
+# any other before it's allowed to merge.
+#
+# Requires the repo setting "Allow auto-merge" (Settings -> General) to
+# be enabled, or `gh pr merge --auto` below fails.
+
+on:
+  push:
+    branches: [bot/test-results]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open or reuse the PR into main
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh pr list --base main --head bot/test-results --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "number=$existing" >> "$GITHUB_OUTPUT"
+          else
+            url=$(gh pr create --base main --head bot/test-results \
+              --title "test results $(date -u +%Y%m%d_%H%M)" \
+              --body "Automated: hourly test-runner results, merged via auto-merge once CI passes.")
+            echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge "${{ steps.pr.outputs.number }}" --merge --auto --delete-branch

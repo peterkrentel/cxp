@@ -1,0 +1,94 @@
+{
+  "timestamp": "20260821_000454",
+  "tier": 0,
+  "passed": 7,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "9b51babb"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "21f83973"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "369e02a6"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: apps/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 22, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "630e1caf"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.95,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "bb941a69"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "e43981b8"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "438f2b08"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "7495e1ac"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 3b41e246: malformed JSON from model (Expecting ',' delimiter: line 6 column 128 (char 308)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 3b41e246: malformed JSON from model (Expecting ',' delimiter: line 6 column 128 (char 308)). No sub-tasks spawned.",
+      "task_id": "3b41e246"
+    }
+  ]
+}

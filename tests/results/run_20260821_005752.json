@@ -1,0 +1,98 @@
+{
+  "timestamp": "20260821_005752",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "e763f65c"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 560c7093: malformed JSON from model (Expecting ',' delimiter: line 24 column 4 (char 1301)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 560c7093: malformed JSON from model (Expecting ',' delimiter: line 24 column 4 (char 1301)). No sub-tasks spawned.",
+      "task_id": "560c7093"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "SyntaxError: invalid syntax (<string>, line 12)"
+      ],
+      "task_id": "fcc6afc1"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "88719d70"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "9ecac4c2"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.85,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: apps/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 26, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "79d3abcc"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "f555126b"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "cb4a9a5a"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "c4bdb74c"
+    }
+  ]
+}

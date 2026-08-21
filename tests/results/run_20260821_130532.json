@@ -1,0 +1,88 @@
+{
+  "timestamp": "20260821_130532",
+  "tier": 0,
+  "passed": 6,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "321f42c8"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "12b5cb92"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 9, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "a7969214"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "dbae6721"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "a5a309d7"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f6686632"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "1eba3e46"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "18e7b36e"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    }
+  ]
+}

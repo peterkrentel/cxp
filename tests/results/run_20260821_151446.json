@@ -1,0 +1,97 @@
+{
+  "timestamp": "20260821_151446",
+  "tier": 0,
+  "passed": 4,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "54886ec6"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    persistence:\n    ^\nbut found another document\n  in \"<unicode string>\", line 3, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "2f9853b3"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "3a049930"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "ad997397"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "3c8021b5"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "692eeb8d"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.95,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "4190d430"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 20, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "1418f757"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No evidence of 'assert' in the artifact"
+      ],
+      "task_id": "b85355da"
+    }
+  ]
+}

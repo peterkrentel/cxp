@@ -1,0 +1,100 @@
+{
+  "timestamp": "20260820_201023",
+  "tier": 0,
+  "passed": 4,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "c717153f"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "a0878336"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 26, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "8ea99593"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "3e833127"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "40179a56"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "613ec386"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "b13d43cd"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "a6553903"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task af8462ae: malformed JSON from model (Expecting ',' delimiter: line 14 column 21 (char 487)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task af8462ae: malformed JSON from model (Expecting ',' delimiter: line 14 column 21 (char 487)). No sub-tasks spawned.",
+      "task_id": "af8462ae"
+    }
+  ]
+}

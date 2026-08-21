@@ -1,0 +1,104 @@
+{
+  "timestamp": "20260820_171036",
+  "tier": 0,
+  "passed": 3,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [
+        "SyntaxError: invalid syntax (<string>, line 4)"
+      ],
+      "task_id": "ad781660"
+    },
+    {
+      "label": "TESTING",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task f90cff68: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 321)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task f90cff68: malformed JSON from model (Expecting property name enclosed in double quotes: line 8 column 5 (char 321)). No sub-tasks spawned.",
+      "task_id": "f90cff68"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "6548529c"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "7a908841"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task de6df543: malformed JSON from model (Expecting ',' delimiter: line 13 column 111 (char 684)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task de6df543: malformed JSON from model (Expecting ',' delimiter: line 13 column 111 (char 684)). No sub-tasks spawned.",
+      "task_id": "de6df543"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 71aeb068: malformed JSON from model (Expecting ':' delimiter: line 8 column 245 (char 706)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 71aeb068: malformed JSON from model (Expecting ':' delimiter: line 8 column 245 (char 706)). No sub-tasks spawned.",
+      "task_id": "71aeb068"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Docstring missing expected sections: ['example']"
+      ],
+      "task_id": "ab50f0f0"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 7, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "ae0c9639"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "f21f6caa"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "timestamp": "20260820_210450",
+  "tier": 0,
+  "passed": 7,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "3f5fab2e"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "4eda2142"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "2e547974"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.75,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "23c08ed4"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "b237c8ed"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "YAML did not parse to a mapping"
+      ],
+      "task_id": "77240d4b"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "96f41ce5"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "8954cfdd"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while parsing a flow node\nexpected the node content, but found '-'\n  in \"<unicode string>\", line 1, column 3:\n    {{- define \"redis-pv\" }}\n      ^"
+      ],
+      "task_id": "a04909ad"
+    }
+  ]
+}

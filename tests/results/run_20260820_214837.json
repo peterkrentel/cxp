@@ -1,0 +1,93 @@
+{
+  "timestamp": "20260820_214837",
+  "tier": 0,
+  "passed": 6,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "bf71021a"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "63eec399"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "05fdab68"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.85,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while parsing a block mapping\n  in \"<unicode string>\", line 6, column 3:\n      persistence: {}\n      ^\nexpected <block end>, but found '<block mapping start>'\n  in \"<unicode string>\", line 7, column 5:\n        enabled: true\n        ^"
+      ],
+      "task_id": "d4c6b0bf"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1:\n    apiVersion: apps/v1\n    ^\nbut found another document\n  in \"<unicode string>\", line 29, column 1:\n    ---\n    ^"
+      ],
+      "task_id": "15ac63aa"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "bf892d9b"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "63f84ffb"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "8a573137"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "ae4ab886"
+    }
+  ]
+}

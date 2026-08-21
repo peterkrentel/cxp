@@ -1,0 +1,99 @@
+{
+  "timestamp": "20260821_052644",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "ad1d5a0d"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Missing 'persistence' config",
+        "Missing 'resources' config"
+      ],
+      "task_id": "2e108a14"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Verifier didn't flag any of: ['url', 'valid', 'sanitiz']"
+      ],
+      "task_id": "eb18a37b"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "bd3c5956"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "751282d6"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 1.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "bbfdddd5"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "7a367e6e"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task ae09d307: malformed JSON from model (Invalid \\escape: line 62 column 235 (char 4279)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task ae09d307: malformed JSON from model (Invalid \\escape: line 62 column 235 (char 4279)). No sub-tasks spawned.",
+      "task_id": "ae09d307"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "19807d02"
+    }
+  ]
+}

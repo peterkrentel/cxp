@@ -83,6 +83,29 @@ async def test_list_valued_goal_field_is_coerced_not_crashed_on(monkeypatch):
     assert "Spawned 1 sub-packets" in result
 
 
+async def test_trailing_comma_in_an_otherwise_valid_decomposition_no_longer_fails(monkeypatch):
+    """Found live 2026-08-21 via a full OTel span capture (packet
+    dcb5043e): a genuinely complete, well-formed decomposition failed to
+    parse purely because of a trailing comma after each object's last
+    property. Before _strip_trailing_commas() existed, this was
+    indistinguishable from real malformation/truncation."""
+    raw = """[
+    {
+        "type": "code",
+        "capability": "code",
+        "goal": "write a function",
+        "instructions": "do it",
+        "priority": 3,
+    },
+]"""
+    p, emitted = await _planner(monkeypatch, raw)
+
+    result = await p._execute(_goal_packet())
+
+    emitted.assert_awaited_once()
+    assert "Spawned 1 sub-packets" in result
+
+
 async def test_type_is_derived_from_the_validated_capability_not_trusted_raw(monkeypatch):
     # Found live 2026-08-20: the model emitted capability="code" but
     # type="verify" for a sub-task that WAS the real code-writing step (its

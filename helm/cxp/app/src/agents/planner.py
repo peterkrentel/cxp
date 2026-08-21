@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import logging
 
-from ..agent_shell import AgentShell, strip_code_fence
+from opentelemetry.trace import Status, StatusCode
+
+from ..agent_shell import AgentShell, _strip_trailing_commas, strip_code_fence
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
+from ..telemetry import get_tracer
 
 log = logging.getLogger(__name__)
 
@@ -46,21 +49,44 @@ class PlannerAgent(AgentShell):
                               packet_id=packet.id)
 
         raw = strip_code_fence(raw)
-        # strict=False: small local models sometimes emit a literal unescaped
-        # control character (e.g. a raw newline) inside a string value —
-        # strict JSON rejects that outright, strict=False tolerates it.
-        # Doesn't fix every malformation this model produces (missing
-        # delimiters, truncated output), just this specific recurring class.
-        # A malformed decomposition used to crash _execute() uncaught, which
-        # halts the ENTIRE swarm over one goal's LLM hiccup -- verifier
-        # already degrades gracefully on the same failure (see its own
-        # JSONDecodeError handling); planner should too, rather than being
-        # the one agent whose bad output blocks everyone else's work.
-        try:
-            sub_tasks: list[dict] = json.loads(raw, strict=False)
-        except json.JSONDecodeError as e:
-            await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
-            return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
+        # Small local models frequently write a trailing comma after the
+        # last property/element -- legal in Python dict/list literals,
+        # invalid in strict JSON. Found live 2026-08-21 via a full OTel
+        # span capture (packet dcb5043e, docs/otel-setup.md): a genuinely
+        # complete, well-formed response failed to parse purely because
+        # of this. A no-op on already-valid JSON.
+        cleaned = _strip_trailing_commas(raw)
+
+        # Own span (not just llm.call, which already ended by the time
+        # we're here) so a still-broken parse after the cleanup above
+        # shows up as a real ERROR-status span -- llm.call has no way to
+        # know its own response failed downstream, so without this the
+        # "Error Spans" panel on the OTel dashboard reads 0 forever, even
+        # during a run full of malformed decompositions.
+        tracer = get_tracer(__name__)
+        with tracer.start_as_current_span("decomposition.parse") as span:
+            span.set_attribute("packet.id", packet.id)
+            span.set_attribute("json.sanitized", cleaned != raw)
+            # strict=False: small local models sometimes emit a literal
+            # unescaped control character (e.g. a raw newline) inside a
+            # string value -- strict JSON rejects that outright,
+            # strict=False tolerates it. Doesn't fix every malformation
+            # this model produces (missing delimiters, truncated output),
+            # just this specific recurring class. A malformed
+            # decomposition used to crash _execute() uncaught, which
+            # halts the ENTIRE swarm over one goal's LLM hiccup --
+            # verifier already degrades gracefully on the same failure
+            # (see its own JSONDecodeError handling); planner should too,
+            # rather than being the one agent whose bad output blocks
+            # everyone else's work.
+            try:
+                sub_tasks: list[dict] = json.loads(cleaned, strict=False)
+            except json.JSONDecodeError as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("json.parse_error", str(e))
+                span.set_attribute("llm.response", raw)
+                await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
+                return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
         for task in sub_tasks:
             raw_type = task.get("type", "code")

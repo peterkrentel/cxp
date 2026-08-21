@@ -1,0 +1,93 @@
+{
+  "timestamp": "20260821_044542",
+  "tier": 0,
+  "passed": 7,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PASS",
+      "score": 0.5,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "a99470d0"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while parsing a block mapping\n  in \"<unicode string>\", line 43, column 3:\n    - command:\n      ^\nexpected <block end>, but found '<scalar>'\n  in \"<unicode string>\", line 46, column 14:\n      - \"--name\" \"redis-persistent-deployment\"\n                 ^"
+      ],
+      "task_id": "f9b324c6"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "2ae20af5"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "33977317"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "179b3c61"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.85,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "f96ccb17"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "5ee1fbe0"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.6,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while parsing a block collection\n  in \"<unicode string>\", line 35, column 17:\n                    - \"/usr/local/bin/helm\"\n                    ^\nexpected <block end>, but found '<scalar>'\n  in \"<unicode string>\", line 37, column 28:\n                    - \"--name\" \"myapi\"\n                               ^"
+      ],
+      "task_id": "a1aa59a0"
+    },
+    {
+      "label": "TESTING",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "ac5b683f"
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from src.contracts import ArtifactResult, AssessmentResult, ContractParseError, VerificationResult
 from src.packet import CXPPacket, PacketType, Payload
@@ -136,6 +136,32 @@ async def test_assessor_marks_malformed_contract_evidence_as_error(monkeypatch):
     assert evidence["validation_issues"] == ["assess contract validation failed"]
 
 
+async def test_assessor_degrades_gracefully_on_an_unexpected_non_contract_exception(monkeypatch):
+    from src.agents import assessor as assessor_module
+    from src.agents.assessor import AssessorAgent
+
+    agent = AssessorAgent()
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw assessment"))
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+
+    def raise_unexpected(*_args):
+        raise RecursionError("unexpected")
+
+    monkeypatch.setattr(assessor_module, "parse_contract", raise_unexpected)
+    packet = CXPPacket(
+        type=PacketType.REFLECT,
+        capability="assess",
+        payload=Payload(goal="assess code", context="artifact"),
+    )
+
+    # Must degrade to an empty assessment instead of propagating and halting
+    # the swarm over a genuinely unexpected non-contract exception.
+    output = await agent._execute(packet)
+
+    assert json.loads(output)["labels"] == []
+
+
 async def test_executor_normalizes_artifact_before_verification(monkeypatch):
     from src.agents import executor as executor_module
     from src.agents.executor import ExecutorAgent
@@ -211,7 +237,7 @@ async def test_verifier_skips_episodic_write_during_a_candidate_evaluation_run(m
     monkeypatch.setattr(agent, "emit_packet", AsyncMock())
     monkeypatch.setattr(agent, "record_attempt", AsyncMock())
     monkeypatch.setattr(agent._memory, "save", AsyncMock())
-    add_episodic = AsyncMock()
+    add_episodic = Mock()
     monkeypatch.setattr(agent._memory, "add_episodic", add_episodic)
     monkeypatch.setattr(
         verifier_module,
@@ -230,6 +256,133 @@ async def test_verifier_skips_episodic_write_during_a_candidate_evaluation_run(m
     # history the regression detector reads -- a deliberately bad candidate
     # would otherwise corrupt the next real regression check.
     add_episodic.assert_not_called()
+
+
+async def test_verifier_never_deploys_or_stages_a_candidate_from_an_evaluation_run(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    emitted = AsyncMock()
+    monkeypatch.setattr(agent, "emit_packet", emitted)
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        # A high score (>= 0.85 deploy threshold) AND a failed verdict
+        # (passed=False, triggers reflect-on-fail) at the same time --
+        # deliberately contradictory so either guard failing to fire is
+        # caught by this single test.
+        lambda *_args: VerificationResult(score=0.95, passed=False, issues=["x"], suggestion="y"),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact", inputs={"evaluation_run": True}),
+    )
+
+    await agent._execute(packet)
+
+    # The hourly candidate-comparison job must never trigger a real
+    # cluster deployment or stage a new skill candidate on its own --
+    # only the assess packet (capability labeling, no side effect) is
+    # expected here.
+    emitted_capabilities = [call.args[0].capability for call in emitted.await_args_list]
+    assert emitted_capabilities == ["assess"]
+
+
+async def test_verifier_never_deploys_when_running_an_explicit_candidate_skill(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    emitted = AsyncMock()
+    monkeypatch.setattr(agent, "emit_packet", emitted)
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(score=0.95, passed=True, issues=[], suggestion=""),
+    )
+    # No explicit evaluation_run flag here -- an unvetted candidate_id alone
+    # (e.g. reached via an unauthenticated /api/submit call) must be enough
+    # to suppress the deploy trigger, independent of who set it.
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact", inputs={"candidate_id": "candidate-1"}),
+    )
+
+    await agent._execute(packet)
+
+    emitted_capabilities = [call.args[0].capability for call in emitted.await_args_list]
+    assert "deploy" not in emitted_capabilities
+
+
+async def test_verifier_still_deploys_and_stages_candidates_for_real_production_traffic(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    emitted = AsyncMock()
+    monkeypatch.setattr(agent, "emit_packet", emitted)
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    add_episodic = Mock()
+    monkeypatch.setattr(agent._memory, "add_episodic", add_episodic)
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(score=0.95, passed=False, issues=["x"], suggestion="y"),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact"),
+    )
+
+    await agent._execute(packet)
+
+    emitted_capabilities = [call.args[0].capability for call in emitted.await_args_list]
+    assert "reflect" in emitted_capabilities
+    assert "deploy" in emitted_capabilities
+    add_episodic.assert_called_once()
+
+
+async def test_verifier_degrades_gracefully_on_an_unexpected_non_contract_exception(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    monkeypatch.setattr(agent, "emit_packet", AsyncMock())
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+
+    def raise_unexpected(*_args):
+        raise RecursionError("unexpected")
+
+    monkeypatch.setattr(verifier_module, "parse_contract", raise_unexpected)
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact"),
+    )
+
+    # Must degrade to a failed verdict instead of propagating and halting
+    # the swarm over a genuinely unexpected non-contract exception.
+    output = await agent._execute(packet)
+
+    assert json.loads(output)["passed"] is False
 
 
 async def test_failed_verification_targets_executor_candidate(monkeypatch):

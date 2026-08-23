@@ -97,6 +97,15 @@ def run_candidate_comparison(
     baseline_results = []
     candidate_results = []
     for test in held_out_tests:
+        halt = check_halted()
+        if halt:
+            # A halted swarm rejects every submission with 409 -- without
+            # this check, a mid-comparison halt would silently produce a
+            # spurious regression/promotion report built from a wall of
+            # rejections instead of skipping cleanly, same failure mode this
+            # guards against in the main suite loop.
+            print(f"  ⚠️  swarm halted mid-comparison ({halt.get('reason', 'unknown error')}), skipping remaining held-out tests")
+            break
         active_id = submit_task(test["goal"], inputs={"evaluation_run": True})
         active_raw = wait_for_results({active_id: test}, timeout=test["timeout"]) if active_id else {}
         baseline_results.append(evaluate(test, active_raw.get(active_id)))

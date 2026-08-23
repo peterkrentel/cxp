@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from ..agent_shell import AgentShell
-from ..contracts import ContractParseError, parse_contract
+from ..contracts import parse_contract
 from ..packet import CXPPacket, PacketType, Payload
 
 SYSTEM = """You are a capability assessor for an AI agent swarm.
@@ -45,7 +45,10 @@ class AssessorAgent(AgentShell):
         validation_issues: list[str] = []
         try:
             result = parse_contract("assess", raw).model_dump()
-        except ContractParseError as e:
+        except Exception as e:
+            # Catches more than ContractParseError on purpose -- a genuinely
+            # unexpected exception here must still degrade gracefully rather
+            # than propagate and halt the swarm over one bad response.
             validation_status = "contract_error"
             validation_issues = [str(e)]
             result = {"labels": [], "verdict": raw[:200], "strengths": [], "gaps": []}

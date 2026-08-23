@@ -25,6 +25,7 @@ from .agent_shell import (
   SUBJECT_PACKETS,
   SUBJECT_RESULTS,
   SUBJECT_THINKING,
+  get_or_create_kv,
 )
 from .memory import get_store
 from .packet import CXPPacket, PacketType, Payload
@@ -48,16 +49,8 @@ _kv_cache: dict[str, object] = {}
 
 
 async def _kv(bucket: str):
-    from nats.js.errors import BadRequestError, NotFoundError
     if bucket not in _kv_cache:
-        js = _nc.jetstream()
-        try:
-            _kv_cache[bucket] = await js.key_value(bucket)
-        except NotFoundError:
-            try:
-                _kv_cache[bucket] = await js.create_key_value(bucket=bucket)
-            except BadRequestError:
-                _kv_cache[bucket] = await js.key_value(bucket)
+        _kv_cache[bucket] = await get_or_create_kv(_nc.jetstream(), bucket)
     return _kv_cache[bucket]
 
 

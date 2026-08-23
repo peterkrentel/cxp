@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..agent_shell import AgentShell
 from ..contracts import SkillRevisionCandidate
+from ..candidate_evaluation import resolve_source_attempt
 from ..packet import CXPPacket
 
 log = logging.getLogger(__name__)
@@ -36,11 +37,12 @@ class ReflectAgent(AgentShell):
         evidence_class = packet.payload.inputs.get("evidence_class", "judgment")
         if evidence_class not in {"contract", "deterministic-validator", "judgment"}:
             evidence_class = "judgment"
-        source_attempt = next(
-            (attempt for attempt in reversed(self._memory.attempts)
-             if attempt.get("attempt_id") == source_attempt_id),
-            None,
-        )
+        # Match by attempt_id, falling back to task_id -- the same lookup
+        # src/candidate_evaluation.py's own health gate uses, since callers
+        # (e.g. run_tests.py's improvement_inputs_for_result()) pass a task_id
+        # here, not the attempt's own immutable id.
+        attempts_by_id = {attempt.get("attempt_id"): attempt for attempt in self._memory.attempts}
+        source_attempt = resolve_source_attempt(attempts_by_id, source_attempt_id)
         if source_attempt is not None and not source_attempt.get("environment_healthy", True):
             return f"No candidate created: source attempt {source_attempt_id} was platform-unhealthy."
 

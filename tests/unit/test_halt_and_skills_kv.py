@@ -74,3 +74,45 @@ async def test_put_skill_overwrite_is_visible_to_a_later_get(agent, fake_kv):
     await agent.put_skill("example-skill", "version two")
     content, _ = await agent.get_skill_with_revision("example-skill")
     assert content == "version two"
+
+
+async def test_get_or_create_kv_creates_the_bucket_when_it_does_not_exist_yet():
+    from nats.js.errors import NotFoundError
+
+    from src.agent_shell import get_or_create_kv
+
+    created = {}
+
+    class FakeJS:
+        async def key_value(self, bucket):
+            if bucket not in created:
+                raise NotFoundError()
+            return created[bucket]
+
+        async def create_key_value(self, bucket):
+            created[bucket] = f"kv-{bucket}"
+            return created[bucket]
+
+    # Every hourly CronJob run must be able to read a candidate-evaluation
+    # bucket that no reflect run has ever staged yet, instead of crashing
+    # with an uncaught NotFoundError until the first candidate exists.
+    kv = await get_or_create_kv(FakeJS(), "cxp-skill-candidates")
+
+    assert kv == "kv-cxp-skill-candidates"
+
+
+async def test_get_or_create_kv_recovers_from_a_lost_create_race():
+    from nats.js.errors import BadRequestError, NotFoundError
+
+    from src.agent_shell import get_or_create_kv
+
+    class FakeJS:
+        async def key_value(self, bucket):
+            return f"kv-{bucket}"
+
+        async def create_key_value(self, bucket):
+            raise BadRequestError()
+
+    kv = await get_or_create_kv(FakeJS(), "cxp-skill-candidates")
+
+    assert kv == "kv-cxp-skill-candidates"

@@ -123,3 +123,34 @@ def test_candidate_comparison_marks_both_submissions_as_evaluation_runs(monkeypa
     # to tell a deliberate candidate comparison apart from real production
     # traffic before writing to episodic memory.
     assert all(inputs is not None and inputs.get("evaluation_run") is True for inputs in submitted_inputs)
+
+
+def test_candidate_comparison_skips_held_out_runs_while_the_swarm_is_halted(monkeypatch):
+    test_case = {
+        "label": "CODE_GENERATION",
+        "goal": "write a function",
+        "validator": lambda _output: (True, []),
+        "threshold": 0.5,
+        "timeout": 10,
+    }
+    submit_called = False
+
+    def fake_submit(goal, inputs=None):
+        nonlocal submit_called
+        submit_called = True
+        return "task-id"
+
+    monkeypatch.setattr(run_tests, "check_halted", lambda: {"reason": "boom"})
+    monkeypatch.setattr(run_tests, "submit_task", fake_submit)
+
+    # A halted swarm rejects submissions with 409 -- without this check, a
+    # candidate comparison would submit into that wall of rejections and
+    # report a spurious recommendation instead of skipping cleanly.
+    report = run_tests.run_candidate_comparison(
+        candidate_id="candidate-1",
+        source_attempt={"environment_healthy": True},
+        held_out_tests=[test_case],
+    )
+
+    assert submit_called is False
+    assert report["recommendation"] == "insufficient_evidence"

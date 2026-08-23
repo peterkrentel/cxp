@@ -128,3 +128,30 @@ async def test_reflect_rejects_platform_unhealthy_source_attempt(monkeypatch):
     agent.llm.assert_not_awaited()
     put_candidate.assert_not_awaited()
     assert "platform-unhealthy" in result
+
+
+async def test_reflect_resolves_a_platform_unhealthy_source_attempt_by_task_id(monkeypatch):
+    agent = ReflectAgent()
+    # run_tests.py's improvement_inputs_for_result() passes a test task_id
+    # as source_attempt_id, not the attempt's own immutable id -- reflect
+    # must resolve it the same way src/candidate_evaluation.py's
+    # resolve_source_attempt() does, or this health gate silently never
+    # matches a real record once real traffic starts using task_id here.
+    agent._memory.attempts = [{"attempt_id": "attempt-1", "task_id": "task-1", "environment_healthy": False}]
+    monkeypatch.setattr(agent, "get_skill", AsyncMock())
+    monkeypatch.setattr(agent, "llm", AsyncMock())
+    put_candidate = AsyncMock()
+    monkeypatch.setattr(agent, "put_skill_candidate", put_candidate)
+    packet = CXPPacket(
+        type=PacketType.REFLECT,
+        capability="reflect",
+        payload=Payload(
+            goal="Improve executor output",
+            inputs={"target_role": "executor", "source_attempt_id": "task-1"},
+        ),
+    )
+
+    result = await agent._execute(packet)
+
+    put_candidate.assert_not_awaited()
+    assert "platform-unhealthy" in result

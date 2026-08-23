@@ -169,6 +169,20 @@ class _NDJSONReassembler:
         return self._pending
 
 
+async def get_or_create_kv(js, bucket: str):
+    """Get-or-create a JetStream KV bucket -- the one pattern every KV
+    consumer in this codebase needs (agents, the web dashboard, the
+    candidate-evaluation worker), previously duplicated three times."""
+    try:
+        return await js.key_value(bucket)
+    except NotFoundError:
+        try:
+            return await js.create_key_value(bucket=bucket)
+        except BadRequestError:
+            # lost a create race against another replica — it exists now
+            return await js.key_value(bucket)
+
+
 class AgentShell(ABC):
     """Deterministic wrapper around a non-deterministic LLM worker."""
 
@@ -205,15 +219,7 @@ class AgentShell(ABC):
     async def _kv(self, bucket: str):
         """Get-or-create a JetStream KV bucket, cached per agent instance."""
         if bucket not in self._kv_cache:
-            js = self._nc.jetstream()
-            try:
-                self._kv_cache[bucket] = await js.key_value(bucket)
-            except NotFoundError:
-                try:
-                    self._kv_cache[bucket] = await js.create_key_value(bucket=bucket)
-                except BadRequestError:
-                    # lost a create race against another replica — it exists now
-                    self._kv_cache[bucket] = await js.key_value(bucket)
+            self._kv_cache[bucket] = await get_or_create_kv(self._nc.jetstream(), bucket)
         return self._kv_cache[bucket]
 
     async def get_skill(self, name: str, fallback_path: str | None = None) -> str:

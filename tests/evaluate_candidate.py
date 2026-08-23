@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.agent_shell import KV_CANDIDATE_EVALUATIONS, KV_SKILL_CANDIDATES
+from src.agent_shell import KV_CANDIDATE_EVALUATIONS, KV_SKILL_CANDIDATES, get_or_create_kv
 from src.candidate_evaluation import resolve_source_attempt, select_evaluable_candidate
 from src.memory import get_store
 from tests.run_tests import TIER_0_TESTS, run_candidate_comparison
@@ -80,8 +80,12 @@ async def _load_pending_candidate() -> tuple[str, dict[str, Any], dict[str, Any]
     nc = await nats.connect(os.environ.get("NATS_URL", "nats://cxp-nats:4222"))
     try:
         js = nc.jetstream()
-        candidates = await _read_json_bucket(await js.key_value(KV_SKILL_CANDIDATES))
-        reports = await _read_json_bucket(await js.key_value(KV_CANDIDATE_EVALUATIONS))
+        # Neither bucket may exist yet on a fresh cluster (before reflect
+        # has ever staged a candidate, or before the first report is ever
+        # published) -- get_or_create_kv avoids an uncaught NotFoundError
+        # crashing this CronJob every hour until that first candidate exists.
+        candidates = await _read_json_bucket(await get_or_create_kv(js, KV_SKILL_CANDIDATES))
+        reports = await _read_json_bucket(await get_or_create_kv(js, KV_CANDIDATE_EVALUATIONS))
         attempts = {attempt.get("attempt_id"): attempt for attempt in get_store().attempts}
         selected = select_evaluable_candidate(candidates=candidates, attempts=attempts, reports=reports)
         if selected is None:
@@ -98,7 +102,7 @@ async def _publish_report(candidate_id: str, report: dict[str, Any]) -> None:
 
     nc = await nats.connect(os.environ.get("NATS_URL", "nats://cxp-nats:4222"))
     try:
-        kv = await nc.jetstream().key_value(KV_CANDIDATE_EVALUATIONS)
+        kv = await get_or_create_kv(nc.jetstream(), KV_CANDIDATE_EVALUATIONS)
         await kv.put(candidate_id, json.dumps(report).encode())
     finally:
         await nc.drain()

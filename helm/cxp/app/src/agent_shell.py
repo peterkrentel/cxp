@@ -181,6 +181,20 @@ class _NDJSONReassembler:
         return self._pending
 
 
+def _build_ollama_chat_request(system: str, user: str, json_mode: bool = False) -> dict:
+    """The request body for Ollama's /api/chat. json_mode sets Ollama's
+    `format: "json"` param, constraining token sampling to syntactically
+    valid JSON -- only set it for a capability whose contract actually
+    expects JSON back (see llm()'s docstring for why)."""
+    request = {
+        "model": OLLAMA_MODEL, "stream": True,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+    }
+    if json_mode:
+        request["format"] = "json"
+    return request
+
+
 async def get_or_create_kv(js, bucket: str):
     """Get-or-create a JetStream KV bucket -- the one pattern every KV
     consumer in this codebase needs (agents, the web dashboard, the
@@ -824,13 +838,24 @@ class AgentShell(ABC):
             json.dumps({"agent": self.agent_id, "text": text}).encode())
 
     async def llm(self, system: str, user: str, packet_id: str | None = None,
-                   task_id: str | None = None, parent_packet_id: str | None = None) -> str:
+                   task_id: str | None = None, parent_packet_id: str | None = None,
+                   json_mode: bool = False) -> str:
         """Call Ollama with streaming. Auto-pull is disabled (see below) — a
         missing model raises RuntimeError rather than silently pulling.
 
         packet_id/task_id/parent_packet_id are optional (some callers don't
         have one in scope) and only used to tag the OTel span below for
-        later lookup/grouping -- they have no effect on the call itself."""
+        later lookup/grouping -- they have no effect on the call itself.
+
+        json_mode constrains Ollama's token sampling to syntactically valid
+        JSON (Ollama's `format` request param) -- only set this True for a
+        capability whose contract actually expects JSON back (plan/verify/
+        assess/diagnose). Found live 2026-08-23: a planner response used
+        Python triple-quoted string syntax as a JSON value, which json.loads()
+        correctly rejected -- json_mode makes that exact class of syntax
+        error structurally impossible instead of only ever catching it after
+        the fact. Never set this for executor's raw code/YAML output or
+        reflect's raw skill-file text."""
         import httpx
 
         tracer = get_tracer(__name__)
@@ -896,10 +921,8 @@ class AgentShell(ABC):
             # instead of readable progress.
             last_published_len = 0
             reassembler = _NDJSONReassembler()
-            async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={
-                "model": OLLAMA_MODEL, "stream": True,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            }) as resp:
+            async with client.stream("POST", f"{OLLAMA_URL}/api/chat",
+                                      json=_build_ollama_chat_request(system, user, json_mode)) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     token = reassembler.feed(line)

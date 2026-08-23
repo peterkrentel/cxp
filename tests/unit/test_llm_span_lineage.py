@@ -41,3 +41,29 @@ def test_every_llm_call_site_forwards_task_id_and_parent_packet_id():
                 missing.append(rel_path)
 
     assert missing == []
+
+
+# Only capabilities whose contract actually expects JSON back may request
+# Ollama's format="json" mode -- executor's raw code/YAML output and
+# reflect's raw skill-file text must never be JSON-constrained.
+JSON_MODE_EXPECTED = {
+    "src/agents/assessor.py": True,
+    "src/agents/diagnostician.py": True,
+    "src/agents/executor.py": False,
+    "src/agents/planner.py": True,
+    "src/agents/reflect.py": False,
+    "src/agents/verifier.py": True,
+}
+
+
+def test_only_json_expecting_capabilities_request_ollama_json_mode():
+    wrong = []
+    for rel_path, expects_json_mode in JSON_MODE_EXPECTED.items():
+        source = (ROOT / rel_path).read_text()
+        match = re.search(r"\.llm\(([^)]*)\)", source, re.DOTALL)
+        assert match, f"no llm() call found in {rel_path}"
+        has_json_mode = "json_mode=True" in match.group(1)
+        if has_json_mode != expects_json_mode:
+            wrong.append(rel_path)
+
+    assert wrong == []

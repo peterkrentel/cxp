@@ -92,6 +92,10 @@ class VerifierAgent(AgentShell):
                         "Propose a one-paragraph update to the executor skill file to prevent this."
                     ),
                     context=packet.payload.context,
+                    inputs={
+                        "target_role": "executor",
+                        "source_attempt_id": packet.id,
+                    },
                 ),
             )
             reflect.append_trace(self.agent_id, "created", "spawned due to failed verification")

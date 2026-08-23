@@ -170,3 +170,36 @@ async def test_executor_normalizes_artifact_before_verification(monkeypatch):
     assert evidence["raw_response"].startswith("```yaml")
     assert evidence["normalized_response"] == "kind: ConfigMap"
     assert evidence["skill_revision"] == 7
+
+
+async def test_failed_verification_targets_executor_candidate(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="failed verdict"))
+    emitted = AsyncMock()
+    monkeypatch.setattr(agent, "emit_packet", emitted)
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(score=0.2, passed=False, issues=["missing test"], suggestion="add a test"),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        parent_packet_id="executor-attempt",
+        payload=Payload(goal="verify code", context="artifact"),
+    )
+
+    await agent._execute(packet)
+
+    reflect_packet = emitted.await_args_list[0].args[0]
+    assert reflect_packet.capability == "reflect"
+    assert reflect_packet.payload.inputs == {
+        "target_role": "executor",
+        "source_attempt_id": packet.id,
+    }

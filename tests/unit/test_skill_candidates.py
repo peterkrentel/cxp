@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from src.agent_shell import KV_SKILL_CANDIDATES
+from src.agent_shell import KV_CANDIDATE_EVALUATIONS, KV_SKILL_CANDIDATES
 from src.agents.reflect import ReflectAgent
 from src.packet import CXPPacket, PacketType, Payload
 
@@ -22,6 +22,19 @@ async def test_skill_candidate_is_stored_in_separate_kv_bucket(agent, fake_kv):
     entry = await fake_kv.get("candidate-1")
     assert revision == entry.revision
     assert b'"target_role": "planner"' in entry.value
+
+
+async def test_candidate_evaluation_report_is_stored_separately(agent, fake_kv):
+    agent._kv_cache[KV_CANDIDATE_EVALUATIONS] = fake_kv
+
+    revision = await agent.put_candidate_evaluation("candidate-1", {
+        "candidate_id": "candidate-1",
+        "recommendation": "recommend_promotion",
+    })
+
+    entry = await fake_kv.get("candidate-1")
+    assert revision == entry.revision
+    assert b'"recommendation": "recommend_promotion"' in entry.value
 
 
 async def test_reflect_creates_candidate_without_overwriting_active_skill(monkeypatch):

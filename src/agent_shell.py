@@ -36,6 +36,7 @@ SUBJECT_THINKING  = "cxp.thinking"   # LLM stream + agent reasoning
 
 KV_SKILLS = "cxp-skills"        # bucket: skill file text, shared across all replicas
 KV_SKILL_CANDIDATES = "cxp-skill-candidates"  # proposed revisions, never active until promoted
+KV_CANDIDATE_EVALUATIONS = "cxp-candidate-evaluations"  # evaluation reports for staged revisions
 KV_STATE  = "cxp-state"         # bucket: swarm-wide control state (e.g. halt flag)
 KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a request
                                       # actually in flight right now, cross-pod
@@ -246,6 +247,11 @@ class AgentShell(ABC):
         """Store a proposed skill revision without changing any active skill."""
         kv = await self._kv(KV_SKILL_CANDIDATES)
         return await kv.put(key, json.dumps(candidate).encode())
+
+    async def put_candidate_evaluation(self, key: str, report: dict) -> int:
+        """Store a promotion recommendation without applying a candidate."""
+        kv = await self._kv(KV_CANDIDATE_EVALUATIONS)
+        return await kv.put(key, json.dumps(report).encode())
 
     async def is_halted(self) -> dict | None:
         """Return the halt record if the swarm is currently paused, else None."""

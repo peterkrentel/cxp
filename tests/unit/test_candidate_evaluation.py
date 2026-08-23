@@ -75,8 +75,8 @@ def test_select_evaluable_candidate_skips_unhealthy_and_already_reported_candida
     candidate = select_evaluable_candidate(
         candidates={
             "candidate-b": {"source_attempt_id": "attempt-b"},
-            "candidate-a": {"source_attempt_id": "attempt-a"},
-            "candidate-c": {"source_attempt_id": "attempt-c"},
+            "candidate-a": {"source_attempt_id": "attempt-a", "target_role": "planner"},
+            "candidate-c": {"source_attempt_id": "attempt-c", "target_role": "executor"},
         },
         attempts={
             "attempt-a": {"environment_healthy": False},
@@ -86,12 +86,20 @@ def test_select_evaluable_candidate_skips_unhealthy_and_already_reported_candida
         reports={"candidate-b": {"recommendation": "reject_regression"}},
     )
 
-    assert candidate == ("candidate-c", {"source_attempt_id": "attempt-c"})
+    assert candidate == ("candidate-c", {"source_attempt_id": "attempt-c", "target_role": "executor"})
 
 
 def test_select_evaluable_candidate_returns_none_without_healthy_unevaluated_source():
     assert select_evaluable_candidate(
         candidates={"candidate-a": {"source_attempt_id": "attempt-a"}},
         attempts={"attempt-a": {"environment_healthy": False}},
+        reports={},
+    ) is None
+
+
+def test_select_evaluable_candidate_skips_unsupported_roles():
+    assert select_evaluable_candidate(
+        candidates={"candidate-a": {"source_attempt_id": "attempt-a", "target_role": "planner"}},
+        attempts={"attempt-a": {"environment_healthy": True}},
         reports={},
     ) is None

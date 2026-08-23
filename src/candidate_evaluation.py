@@ -20,6 +20,8 @@ def select_evaluable_candidate(
         if candidate_id in reports:
             continue
         candidate = candidates[candidate_id]
+        if candidate.get("target_role") != "executor":
+            continue
         source = attempts.get(candidate.get("source_attempt_id", ""))
         if source and source.get("environment_healthy", True):
             return candidate_id, candidate

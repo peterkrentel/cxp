@@ -11,12 +11,14 @@ import urllib.request
 
 # The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
 # which puts only this script's OWN directory on sys.path, not its parent -- so
-# select_active_tier()'s `from tests.check_plateau import ...` would fail to
-# resolve `tests` as a package. Confirmed live: found while packaging
-# check_plateau.py itself into the deployed app for the same reason. Fixing at
-# the source rather than assuming the caller's invocation style, so this works
-# regardless (same fix already applied in check_plateau.py).
+# any `from src...`/`from tests...` import below would fail to resolve those as
+# packages. Must run before any such import, not after -- confirmed live
+# 2026-08-23: this fix previously sat below the `from src.candidate_evaluation`
+# import, so it never ran in time to help that exact import, and the CronJob's
+# first real run crashed immediately with ModuleNotFoundError.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.candidate_evaluation import build_self_improvement_inputs, evaluate_candidate
 
 API = os.environ.get("CXP_WEB_API", "http://cxp-web:8080")
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")  # same PVC agents write to
@@ -33,9 +35,16 @@ def _http_get(path: str) -> dict:
 
 def _http_post(path: str, data: dict) -> dict:
     payload = json.dumps(data).encode()
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("CXP_INTERNAL_TOKEN")
+    if internal_token:
+        # Without this, the web dashboard strips candidate_id/evaluation_run
+        # from this exact same request as if it came from an untrusted
+        # public caller -- see sanitize_untrusted_inputs() in web_dashboard.py.
+        headers["X-CXP-Internal-Token"] = internal_token
     req = urllib.request.Request(
         f"{API}{path}", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        headers=headers, method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -60,8 +69,11 @@ def wait_for_ready(timeout=300):
     return False
 
 
-def submit_task(goal: str) -> str | None:
-    resp = _http_post("/api/submit", {"goal": goal})
+def submit_task(goal: str, inputs: dict | None = None) -> str | None:
+    data = {"goal": goal}
+    if inputs is not None:
+        data["inputs"] = inputs
+    resp = _http_post("/api/submit", data)
     return resp.get("task_id")
 
 
@@ -75,6 +87,61 @@ def check_halted() -> dict | None:
     getting rejected with 409, which previously got reported as plain FAIL
     (looks like a capability regression) instead of "never got to run"."""
     return get_state().get("halt")
+
+
+def run_candidate_comparison(
+    *,
+    candidate_id: str,
+    source_attempt: dict,
+    held_out_tests: list[dict],
+) -> dict:
+    """Run held-out tasks sequentially against active and staged skills.
+
+    This deliberately returns a recommendation only. The caller remains
+    responsible for publishing the report and a human remains responsible for
+    promotion.
+
+    Each held-out test costs two full submissions (baseline + candidate),
+    and the baseline arm is re-run from scratch on every call rather than
+    reusing a recent baseline result -- deliberately not cached here.
+    Caching would need correct invalidation on every active-skill promotion
+    (a stale cached baseline silently comparing against last week's skill
+    would be worse than the current, merely wasteful, behavior), which is
+    real design work this pass didn't do. At most one eligible candidate is
+    evaluated per hourly run today, so the current cost is bounded; revisit
+    if that assumption changes.
+    """
+    baseline_results = []
+    candidate_results = []
+    for test in held_out_tests:
+        halt = check_halted()
+        if halt:
+            # A halted swarm rejects every submission with 409 -- without
+            # this check, a mid-comparison halt would silently produce a
+            # spurious regression/promotion report built from a wall of
+            # rejections instead of skipping cleanly, same failure mode this
+            # guards against in the main suite loop.
+            print(f"  ⚠️  swarm halted mid-comparison ({halt.get('reason', 'unknown error')}), skipping remaining held-out tests")
+            break
+        active_id = submit_task(test["goal"], inputs={"evaluation_run": True})
+        active_raw = wait_for_results({active_id: test}, timeout=test["timeout"]) if active_id else {}
+        baseline_results.append(evaluate(test, active_raw.get(active_id)))
+
+        candidate_id_for_task = submit_task(
+            test["goal"], inputs={"candidate_id": candidate_id, "evaluation_run": True}
+        )
+        candidate_raw = (
+            wait_for_results({candidate_id_for_task: test}, timeout=test["timeout"])
+            if candidate_id_for_task else {}
+        )
+        candidate_results.append(evaluate(test, candidate_raw.get(candidate_id_for_task)))
+
+    return evaluate_candidate(
+        candidate_id=candidate_id,
+        source_attempt=source_attempt,
+        baseline_results=baseline_results,
+        candidate_results=candidate_results,
+    )
 
 
 def wait_for_results(task_ids: dict, timeout=480) -> dict:
@@ -169,11 +236,29 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
     return results
 
 
-def trigger_improvement(label: str, issues: list[str]):
+def trigger_improvement(label: str, issues: list[str], inputs: dict | None = None):
     """Submit a reflect task directly — bypass planner to avoid hallucinated subtasks."""
     goal = f"Test '{label}' failed: {'; '.join(issues[:2])}. Review executor skill and fix."
-    resp = _http_post("/api/submit", {"goal": goal, "capability": "reflect"})
+    data = {"goal": goal, "capability": "reflect"}
+    if inputs is not None:
+        data["inputs"] = inputs
+    resp = _http_post("/api/submit", data)
     print(f"  ↑ Improvement task submitted: {resp.get('task_id', '?')}")
+
+
+def improvement_inputs_for_result(result: dict) -> dict | None:
+    task_id = result.get("task_id")
+    if not task_id:
+        return None
+    if result.get("status") == "PLANNER_FAILED" and result.get("evidence_class") == "contract":
+        return build_self_improvement_inputs(
+            target_role="planner", source_attempt_id=task_id, evidence_class="contract",
+        )
+    if result.get("evidence_class") == "deterministic-validator":
+        return build_self_improvement_inputs(
+            target_role="executor", source_attempt_id=task_id, evidence_class="deterministic-validator",
+        )
+    return None
 
 
 def _strip_markdown(text: str) -> str:
@@ -215,7 +300,18 @@ def check_regression(baseline: list[float], this_run: list[float]) -> str | None
     """Compare this run's average code-capability score against the recent
     historical average from before this run started. Returns a warning
     string if this looks like a real regression (not just a single bad
-    sample), else None."""
+    sample), else None.
+
+    Deliberately separate from src/candidate_evaluation.py's evaluate_
+    candidate(): that function answers "is this specific staged candidate
+    better than the active skill, per held-out label?" (a promotion gate,
+    scoped to one candidate); this answers "did the swarm's regular,
+    unstaged production traffic just get worse?" (a standing alarm over
+    everything, with no candidate involved at all). Neither can replace the
+    other -- a candidate can regress a single label while overall
+    production drift is fine, and production can drift for reasons with no
+    candidate in flight at all (a shared Ollama model swap, for instance).
+    """
     if len(baseline) < 5 or not this_run:
         return None  # not enough history to compare against yet
     baseline_avg = sum(baseline[-15:]) / len(baseline[-15:])
@@ -695,6 +791,8 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
             "issues": [f"Planner produced no sub-tasks: {reason}"],
             "reason": reason,
             "task_id": result.get("task_id"),
+            "validator_passed": False,
+            "evidence_class": "contract",
         }
     # `result.get("score") or 0` used to collapse "verifier genuinely scored
     # this 0.0" and "the score field was missing entirely" (e.g. an upstream
@@ -708,6 +806,8 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     missing_note = " (score field missing -- defaulted, not a genuine 0.0)" if score_was_missing else ""
     print(f"  [{label}] score={score:.2f}{missing_note}  {len(output)} chars")
     valid, issues = test["validator"](output)
+    validator_passed = valid
+    required_issue_keywords_failed = False
 
     if score_was_missing:
         issues = issues + ["No score returned by verifier (missing, not a genuine 0.0) -- likely an upstream parsing failure"]
@@ -716,6 +816,7 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
         if not any(kw in verify_issues_text for kw in test["required_issue_keywords"]):
             valid = False
+            required_issue_keywords_failed = True
             issues = issues + [f"Verifier didn't flag any of: {test['required_issue_keywords']}"]
 
     passed = valid and score >= test["threshold"]
@@ -727,6 +828,9 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         "attempt": attempt,
         "issues": issues,
         "task_id": result.get("task_id"),
+        "validator_passed": validator_passed,
+        "evidence_class": "deterministic-validator" if not validator_passed else "judgment",
+        "required_issue_keywords_failed": required_issue_keywords_failed,
     }
 
 
@@ -837,7 +941,7 @@ def main():
 
         if raw:
             print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
-            trigger_improvement(r["label"], r["issues"])
+            trigger_improvement(r["label"], r["issues"], inputs=improvement_inputs_for_result(r))
             retry_id = submit_task(test["goal"])
             if retry_id:
                 print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")

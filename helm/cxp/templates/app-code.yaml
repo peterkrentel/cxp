@@ -13,6 +13,8 @@ data:
 {{ .Files.Get "app/tests/run_tests.py" | indent 4 }}
   check_plateau.py: |
 {{ .Files.Get "app/tests/check_plateau.py" | indent 4 }}
+  evaluate_candidate.py: |
+{{ .Files.Get "app/tests/evaluate_candidate.py" | indent 4 }}
   sandbox_reaper.py: |
 {{ .Files.Get "app/scripts/sandbox_reaper.py" | indent 4 }}
 ---
@@ -25,6 +27,10 @@ data:
 {{ .Files.Get "app/src/__init__.py" | indent 4 }}
   packet.py: |
 {{ .Files.Get "app/src/packet.py" | indent 4 }}
+  contracts.py: |
+{{ .Files.Get "app/src/contracts.py" | indent 4 }}
+  candidate_evaluation.py: |
+{{ .Files.Get "app/src/candidate_evaluation.py" | indent 4 }}
   agent_shell.py: |
 {{ .Files.Get "app/src/agent_shell.py" | indent 4 }}
   memory.py: |

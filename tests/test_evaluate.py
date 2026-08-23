@@ -44,6 +44,15 @@ def test_evaluate_fails_below_threshold_with_a_genuine_score():
     assert r["status"] == "WARN"
 
 
+def test_evaluate_marks_a_direct_validator_rejection_as_deterministic():
+    test = {"label": "EXAMPLE", "validator": lambda output: (False, ["invalid structure"]), "threshold": 0.0}
+
+    result = evaluate(test, {"output": "bad", "score": 1.0})
+
+    assert result["validator_passed"] is False
+    assert result["evidence_class"] == "deterministic-validator"
+
+
 def test_evaluate_reports_a_distinct_planner_failed_status_not_a_bare_timeout():
     # wait_for_results() now settles a task immediately (instead of running
     # out the full timeout) when the planner completed but spawned zero

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 
-from ..agent_shell import AgentShell, strip_code_fence
+from ..agent_shell import AgentShell
+from ..contracts import parse_contract
+from ..candidate_evaluation import build_self_improvement_inputs
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 log = logging.getLogger(__name__)
@@ -38,32 +40,62 @@ class VerifierAgent(AgentShell):
             f"Artifact to verify:\n{packet.payload.context}"
         )
         raw = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
-        raw = strip_code_fence(raw)
 
-        # Better error handling for JSON parsing. strict=False: tolerate a
-        # literal unescaped control character in a string value, which small
-        # local models occasionally emit.
+        validation_status = "valid"
+        validation_issues: list[str] = []
         try:
-            result = json.loads(raw, strict=False)
-        except json.JSONDecodeError as e:
+            result = parse_contract("verify", raw).model_dump()
+        except Exception as e:
+            validation_status = "contract_error"
+            validation_issues = [str(e)]
             await self.record_validation_failure("verify response JSON parse", f"{e}\nRaw: {raw[:200]}")
-            # Default to fail if we can't parse
+            # Default to fail if we can't parse -- a genuinely unexpected
+            # (non-contract) exception here must still degrade gracefully
+            # rather than propagate and halt the swarm over one bad response.
             result = {"score": 0.0, "passed": False, "issues": [f"Parse error: {e}"], "suggestion": "Malformed response"}
+
+        await self.record_attempt(
+            packet=packet,
+            capability="verify",
+            raw_response=raw,
+            normalized_response=json.dumps(result, separators=(",", ":")),
+            validation_status=validation_status,
+            validation_issues=validation_issues,
+            environment_healthy=True,
+            skill_revision=packet.payload.inputs.get("skill_revision"),
+            persist=False,
+        )
 
         packet.quality_score = float(result.get("score") if result.get("score") is not None else 0.5)
 
-        # Record which skill revision produced this artifact and how it
-        # scored — the only way to actually measure whether reflect's
-        # rewrites are improving output over time, instead of assuming so.
-        self._memory.add_episodic({
-            "capability": packet.payload.inputs.get("capability", "code"),
-            "skill_revision": packet.payload.inputs.get("skill_revision"),
-            "score": packet.quality_score,
-            "goal": packet.payload.goal,
-        })
+        # A candidate-comparison run (evaluation_run) or an explicit
+        # unvetted candidate skill (candidate_id, reachable via /api/submit
+        # with no auth on this prototype) must never feed the regression
+        # baseline, stage a new skill candidate, or trigger a real
+        # deployment -- one flag guards every one of those side effects,
+        # regardless of who set it.
+        is_candidate_traffic = bool(
+            packet.payload.inputs.get("evaluation_run") or packet.payload.inputs.get("candidate_id")
+        )
+
+        if not is_candidate_traffic:
+            # Record which skill revision produced this artifact and how it
+            # scored — the only way to actually measure whether reflect's
+            # rewrites are improving output over time, instead of assuming so.
+            self._memory.add_episodic({
+                "capability": packet.payload.inputs.get("capability", "code"),
+                "skill_revision": packet.payload.inputs.get("skill_revision"),
+                "score": packet.quality_score,
+                "goal": packet.payload.goal,
+            })
+
+        # One save covers both the attempt record above and the episodic
+        # entry just queued -- previously two separate memory.json rewrites
+        # per verify packet (record_attempt's own internal save, plus this
+        # one), on top of a third from _handle_message's own save afterward.
         await self._memory.save()
 
-        if not result.get("passed", False):
+        if not is_candidate_traffic and not result.get("passed", False):
             # spawn a reflect packet so the system can learn
             reflect = CXPPacket(
                 origin=self.agent_id,
@@ -80,6 +112,9 @@ class VerifierAgent(AgentShell):
                         "Propose a one-paragraph update to the executor skill file to prevent this."
                     ),
                     context=packet.payload.context,
+                    inputs=build_self_improvement_inputs(
+                        target_role="executor", source_attempt_id=packet.id, evidence_class="judgment",
+                    ),
                 ),
             )
             reflect.append_trace(self.agent_id, "created", "spawned due to failed verification")
@@ -104,8 +139,12 @@ class VerifierAgent(AgentShell):
         log.info(f"Emitting assess packet {assess.id[:8]}")
         await self.emit_packet(assess)
 
-        # Spawn deploy packet if score is high enough
-        if packet.quality_score is not None and packet.quality_score >= 0.85:
+        # Spawn deploy packet if score is high enough -- never for candidate
+        # or evaluation traffic (see is_candidate_traffic above): the hourly
+        # candidate-comparison job must never trigger a real deployment on
+        # its own, and an unvetted candidate's own artifact must never be
+        # auto-deployed just because it happened to score well.
+        if not is_candidate_traffic and packet.quality_score is not None and packet.quality_score >= 0.85:
             deploy = CXPPacket(
                 origin=self.agent_id,
                 type=PacketType.REFLECT,

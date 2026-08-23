@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,8 @@ SUBJECT_DASHBOARD = "cxp.dashboard"  # agent status events
 SUBJECT_THINKING  = "cxp.thinking"   # LLM stream + agent reasoning
 
 KV_SKILLS = "cxp-skills"        # bucket: skill file text, shared across all replicas
+KV_SKILL_CANDIDATES = "cxp-skill-candidates"  # proposed revisions, never active until promoted
+KV_CANDIDATE_EVALUATIONS = "cxp-candidate-evaluations"  # evaluation reports for staged revisions
 KV_STATE  = "cxp-state"         # bucket: swarm-wide control state (e.g. halt flag)
 KV_OLLAMA_SLOTS = "cxp-ollama-slots"  # bucket: which Ollama instances have a request
                                       # actually in flight right now, cross-pod
@@ -66,6 +69,18 @@ INFLIGHT_STALE_SECONDS = 960
 # by an ack() that apparently didn't register), short enough that this
 # bucket doesn't grow forever across the swarm's lifetime.
 DONE_CLAIM_RETENTION_SECONDS = 7200
+
+# Exception class names / message substrings that indicate transient
+# network/LLM slowness rather than a genuine code or logic defect --
+# matched against an exception's repr()/str() to decide environment_healthy
+# below, and reused by diagnostician.py to decide how to diagnose a halt.
+# "exceeded total budget" matches AgentShell.llm()'s own raised message
+# verbatim -- str(TimeoutError("some message")) returns just the message
+# text, NOT prefixed with the class name, so the class-name substrings
+# alone never actually matched this specific exception (found live
+# 2026-08-17, see diagnostician.py's history for the incident this caused).
+TRANSIENT_EXCEPTIONS = ("ReadTimeout", "ConnectTimeout", "ConnectError", "PoolTimeout",
+                        "TimeoutError", "exceeded total budget")
 
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
 # published while no replica happens to be subscribed (mid-rollout, pod
@@ -166,6 +181,20 @@ class _NDJSONReassembler:
         return self._pending
 
 
+async def get_or_create_kv(js, bucket: str):
+    """Get-or-create a JetStream KV bucket -- the one pattern every KV
+    consumer in this codebase needs (agents, the web dashboard, the
+    candidate-evaluation worker), previously duplicated three times."""
+    try:
+        return await js.key_value(bucket)
+    except NotFoundError:
+        try:
+            return await js.create_key_value(bucket=bucket)
+        except BadRequestError:
+            # lost a create race against another replica — it exists now
+            return await js.key_value(bucket)
+
+
 class AgentShell(ABC):
     """Deterministic wrapper around a non-deterministic LLM worker."""
 
@@ -202,15 +231,7 @@ class AgentShell(ABC):
     async def _kv(self, bucket: str):
         """Get-or-create a JetStream KV bucket, cached per agent instance."""
         if bucket not in self._kv_cache:
-            js = self._nc.jetstream()
-            try:
-                self._kv_cache[bucket] = await js.key_value(bucket)
-            except NotFoundError:
-                try:
-                    self._kv_cache[bucket] = await js.create_key_value(bucket=bucket)
-                except BadRequestError:
-                    # lost a create race against another replica — it exists now
-                    self._kv_cache[bucket] = await js.key_value(bucket)
+            self._kv_cache[bucket] = await get_or_create_kv(self._nc.jetstream(), bucket)
         return self._kv_cache[bucket]
 
     async def get_skill(self, name: str, fallback_path: str | None = None) -> str:
@@ -239,6 +260,20 @@ class AgentShell(ABC):
         """Write an updated skill file, visible to every replica on next read."""
         kv = await self._kv(KV_SKILLS)
         return await kv.put(name, content.encode())
+
+    async def put_skill_candidate(self, key: str, candidate: dict) -> int:
+        """Store a proposed skill revision without changing any active skill."""
+        kv = await self._kv(KV_SKILL_CANDIDATES)
+        return await kv.put(key, json.dumps(candidate).encode())
+
+    async def get_skill_candidate(self, key: str) -> dict | None:
+        """Read a staged candidate without consulting active skill text."""
+        try:
+            kv = await self._kv(KV_SKILL_CANDIDATES)
+            entry = await kv.get(key)
+            return json.loads(entry.value.decode())
+        except Exception:
+            return None
 
     async def is_halted(self) -> dict | None:
         """Return the halt record if the swarm is currently paused, else None."""
@@ -276,6 +311,46 @@ class AgentShell(ABC):
         log.error("[%s] validation failure (%s): %s", self.agent_id, context, detail)
         self._memory.add_semantic(f"[{self.agent_id}] {context}: {detail[:300]}")
         await self._memory.save()
+
+    async def record_attempt(
+        self,
+        *,
+        packet: CXPPacket,
+        capability: str,
+        raw_response: str,
+        normalized_response: str = "",
+        validation_status: str,
+        validation_issues: list[str] | None = None,
+        outcome: str = "completed",
+        environment_healthy: bool = True,
+        skill_revision: int | str | None = None,
+        persist: bool = True,
+    ) -> None:
+        """Persist LLM output evidence independently of optional OTel export.
+
+        persist=False lets a caller that's about to make its own further
+        in-memory writes this same packet (e.g. verifier's episodic-memory
+        entry) batch everything into one save() instead of two.
+        """
+        prompt = "\n".join((packet.payload.goal, packet.payload.instructions, packet.payload.context))
+        self._memory.add_attempt({
+            "attempt_id": packet.id,
+            "packet_id": packet.id,
+            "task_id": packet.task_id,
+            "role": self.agent_id,
+            "capability": capability,
+            "schema_version": packet.schema_version,
+            "skill_revision": skill_revision,
+            "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
+            "raw_response": raw_response,
+            "normalized_response": normalized_response,
+            "validation_status": validation_status,
+            "validation_issues": validation_issues or [],
+            "outcome": outcome,
+            "environment_healthy": environment_healthy,
+        })
+        if persist:
+            await self._memory.save()
 
     @staticmethod
     def _ollama_slot_key(url: str) -> str:
@@ -559,6 +634,29 @@ class AgentShell(ABC):
             # timeout errors) — fall back to repr() so the halt reason
             # and logs always name at least the exception class.
             detail = str(exc) or repr(exc)
+            # Classify by message/class-name match (TRANSIENT_EXCEPTIONS),
+            # not just isinstance(exc, TimeoutError) -- httpx's own timeout
+            # classes (ReadTimeout, ConnectTimeout, ...) aren't TimeoutError
+            # subclasses. A genuine agent bug (anything NOT matching) must be
+            # recorded as environment_healthy=True: that flag feeds directly
+            # into select_evaluable_candidate()'s and reflect's health gate,
+            # and unconditionally marking every failure "unhealthy" would
+            # permanently hide real recurring bugs from ever being treated
+            # as genuine learning evidence.
+            is_transient = any(name == type(exc).__name__ or name in detail for name in TRANSIENT_EXCEPTIONS)
+            outcome = "timeout" if is_transient else "agent_error"
+            try:
+                await self.record_attempt(
+                    packet=packet,
+                    capability=packet.capability,
+                    raw_response="",
+                    validation_status="platform_error",
+                    validation_issues=[detail],
+                    outcome=outcome,
+                    environment_healthy=not is_transient,
+                )
+            except Exception as record_exc:
+                log.error("[%s] could not record failed attempt: %r", self.agent_id, record_exc)
             packet.fail(self.agent_id, detail)
             self._memory.record_failure(self.agent_id, packet.capability)
             await self._memory.save()

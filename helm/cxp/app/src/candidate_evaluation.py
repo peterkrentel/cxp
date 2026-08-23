@@ -1,0 +1,111 @@
+"""Deterministic promotion recommendations for staged skill candidates."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def build_self_improvement_inputs(
+    *, target_role: str, source_attempt_id: str, evidence_class: str,
+) -> dict[str, Any]:
+    """The one shape every reflect-triggering packet's inputs must carry.
+
+    Previously reconstructed independently in three places (planner.py's
+    own reflect emissions, verifier.py's reflect-on-fail emission, and
+    run_tests.py's improvement_inputs_for_result()) -- one of them
+    (verifier's) silently omitted evidence_class, relying on reflect.py's
+    own ("judgment") default instead of being explicit about it.
+    """
+    return {
+        "target_role": target_role,
+        "source_attempt_id": source_attempt_id,
+        "evidence_class": evidence_class,
+    }
+
+
+def _pass_rate(results: list[dict[str, Any]]) -> float:
+    return sum(result.get("status") == "PASS" for result in results) / len(results)
+
+
+def resolve_source_attempt(
+    attempts: dict[str, dict[str, Any]],
+    source_attempt_id: str,
+) -> dict[str, Any] | None:
+    """Find source evidence by immutable attempt ID or the task that produced it."""
+    return attempts.get(source_attempt_id) or next(
+        (attempt for attempt in attempts.values() if attempt.get("task_id") == source_attempt_id),
+        None,
+    )
+
+
+def select_evaluable_candidate(
+    *,
+    candidates: dict[str, dict[str, Any]],
+    attempts: dict[str, dict[str, Any]],
+    reports: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any]] | None:
+    """Choose one healthy, unevaluated candidate in stable key order."""
+    for candidate_id in sorted(candidates):
+        if candidate_id in reports:
+            continue
+        candidate = candidates[candidate_id]
+        if candidate.get("target_role") != "executor":
+            continue
+        if candidate.get("evidence_class") != "deterministic-validator":
+            continue
+        source = resolve_source_attempt(attempts, candidate.get("source_attempt_id", ""))
+        if source and source.get("environment_healthy", True):
+            return candidate_id, candidate
+    return None
+
+
+def evaluate_candidate(
+    *,
+    candidate_id: str,
+    source_attempt: dict[str, Any],
+    baseline_results: list[dict[str, Any]],
+    candidate_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Recommend promotion only for healthy, held-out improvements.
+
+    This function deliberately returns a recommendation rather than applying a
+    skill. Promotion remains a human decision even after a candidate wins.
+    """
+    report: dict[str, Any] = {
+        "candidate_id": candidate_id,
+        "eligible": False,
+        "recommendation": "insufficient_evidence",
+        "baseline_pass_rate": None,
+        "candidate_pass_rate": None,
+        "regressions": [],
+    }
+    if not source_attempt.get("environment_healthy", True):
+        report["recommendation"] = "reject_platform_unhealthy"
+        return report
+    if not baseline_results or not candidate_results:
+        return report
+
+    baseline_by_label = {result.get("label"): result for result in baseline_results}
+    candidate_by_label = {result.get("label"): result for result in candidate_results}
+    regressions = sorted(
+        label for label, baseline in baseline_by_label.items()
+        if baseline.get("status") == "PASS"
+        and candidate_by_label.get(label, {}).get("status") != "PASS"
+    )
+    baseline_pass_rate = _pass_rate(baseline_results)
+    candidate_pass_rate = _pass_rate(candidate_results)
+    report.update({
+        "baseline_pass_rate": baseline_pass_rate,
+        "candidate_pass_rate": candidate_pass_rate,
+        "regressions": regressions,
+    })
+    if regressions:
+        report["recommendation"] = "reject_regression"
+        return report
+    if candidate_pass_rate <= baseline_pass_rate:
+        report["recommendation"] = "reject_no_improvement"
+        return report
+
+    report["eligible"] = True
+    report["recommendation"] = "recommend_promotion"
+    return report

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -15,7 +16,18 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .agent_shell import KV_STATE, NATS_URL, SUBJECT_DASHBOARD, SUBJECT_PACKETS, SUBJECT_RESULTS, SUBJECT_THINKING
+from .agent_shell import (
+  KV_CANDIDATE_EVALUATIONS,
+  KV_SKILL_CANDIDATES,
+  KV_SKILLS,
+  KV_STATE,
+  NATS_URL,
+  SUBJECT_DASHBOARD,
+  SUBJECT_PACKETS,
+  SUBJECT_RESULTS,
+  SUBJECT_THINKING,
+  get_or_create_kv,
+)
 from .memory import get_store
 from .packet import CXPPacket, PacketType, Payload
 
@@ -38,16 +50,8 @@ _kv_cache: dict[str, object] = {}
 
 
 async def _kv(bucket: str):
-    from nats.js.errors import BadRequestError, NotFoundError
     if bucket not in _kv_cache:
-        js = _nc.jetstream()
-        try:
-            _kv_cache[bucket] = await js.key_value(bucket)
-        except NotFoundError:
-            try:
-                _kv_cache[bucket] = await js.create_key_value(bucket=bucket)
-            except BadRequestError:
-                _kv_cache[bucket] = await js.key_value(bucket)
+        _kv_cache[bucket] = await get_or_create_kv(_nc.jetstream(), bucket)
     return _kv_cache[bucket]
 
 
@@ -76,6 +80,59 @@ async def get_tier_status() -> dict | None:
         return json.loads(entry.value.decode())
     except Exception:
         return None
+
+
+async def get_candidate_evaluation(candidate_id: str) -> dict | None:
+    if not _nc:
+        return None
+    try:
+        kv = await _kv(KV_CANDIDATE_EVALUATIONS)
+        entry = await kv.get(candidate_id)
+        return json.loads(entry.value.decode())
+    except Exception:
+        return None
+
+
+async def get_candidate_evaluations() -> list[dict]:
+    if not _nc:
+        return []
+    try:
+        kv = await _kv(KV_CANDIDATE_EVALUATIONS)
+        reports = []
+        for candidate_id in sorted(await kv.keys()):
+            report = json.loads((await kv.get(candidate_id)).value.decode())
+            reports.append({"candidate_id": candidate_id, **report})
+        return reports
+    except Exception:
+        return []
+
+
+async def promote_candidate(candidate_id: str) -> dict:
+    """Apply a human-approved, positively evaluated candidate skill."""
+    if not _nc:
+        raise ValueError("dashboard is not connected to NATS")
+    candidates = await _kv(KV_SKILL_CANDIDATES)
+    reports = await _kv(KV_CANDIDATE_EVALUATIONS)
+    try:
+        candidate = json.loads((await candidates.get(candidate_id)).value.decode())
+        report = json.loads((await reports.get(candidate_id)).value.decode())
+    except Exception as exc:
+        raise ValueError(f"candidate or evaluation report not found: {candidate_id}") from exc
+    if report.get("recommendation") != "recommend_promotion":
+        raise ValueError(f"candidate {candidate_id} is not recommended for promotion")
+    target_role = candidate.get("target_role")
+    content = candidate.get("content")
+    if target_role not in {"planner", "executor", "verifier"} or not isinstance(content, str):
+        raise ValueError(f"candidate {candidate_id} has invalid promotion data")
+    active_skills = await _kv(KV_SKILLS)
+    revision = await active_skills.put(target_role, content.encode())
+    report["promotion"] = {
+      "revision": revision,
+      "target_role": target_role,
+      "timestamp": datetime.now().isoformat(),
+    }
+    await reports.put(candidate_id, json.dumps(report).encode())
+    return {"candidate_id": candidate_id, "target_role": target_role, "revision": revision}
 
 
 # Every question asked by hand tonight while chasing a live duplicate-
@@ -218,6 +275,47 @@ async def startup():
     log.info("Startup event completed (subscribe_nats running in background)")
 
 
+# Fields that only the trusted in-cluster test-runner CronJob may set --
+# candidate_id lets a caller run any staged (unvetted) skill candidate
+# against a real task, and evaluation_run hides a real production score
+# from the episodic-memory regression baseline. /api/submit has no other
+# authentication, so both are stripped from any caller that can't present
+# the shared token below.
+INTERNAL_ONLY_INPUT_KEYS = {"candidate_id", "evaluation_run"}
+
+
+def _has_valid_internal_token(header_value: str | None) -> bool:
+    expected = os.environ.get("CXP_INTERNAL_TOKEN")
+    if not expected or not header_value:
+        return False
+    return hmac.compare_digest(header_value, expected)
+
+
+def sanitize_untrusted_inputs(inputs: dict, internal_token_header: str | None) -> dict:
+    if _has_valid_internal_token(internal_token_header):
+        return inputs
+    return {k: v for k, v in inputs.items() if k not in INTERNAL_ONLY_INPUT_KEYS}
+
+
+def build_submission_packet(body: dict) -> CXPPacket:
+    goal = body.get("goal", "").strip()
+    inputs = body.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise ValueError("inputs must be an object")
+    capability = body.get("capability", "plan")
+    type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
+                "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
+                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
+    return CXPPacket(
+        origin="web-ui",
+        type=type_map.get(capability, PacketType.PLAN),
+        capability=capability,
+        priority=5,
+        task_id=uuid.uuid4().hex[:8],
+        payload=Payload(goal=goal, instructions=goal, context="", inputs=inputs),
+    )
+
+
 @app.post("/api/submit")
 async def submit_task(request: Request):
     halt = await get_halt()
@@ -228,26 +326,18 @@ async def submit_task(request: Request):
         }, status_code=409)
 
     body = await request.json()
-    goal = body.get("goal", "").strip()
-    if not goal:
+    if isinstance(body.get("inputs"), dict):
+        body["inputs"] = sanitize_untrusted_inputs(
+            body["inputs"], request.headers.get("x-cxp-internal-token")
+        )
+    try:
+        packet = build_submission_packet(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not packet.payload.goal:
         return JSONResponse({"error": "goal required"}, status_code=400)
-    # allow callers (e.g. test runner) to target a specific capability directly
-    capability = body.get("capability", "plan")
-    # Map capability to packet type. assess/deploy/etc route by capability name in NATS, not by type
-    type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
-                "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
-                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
-    ptype = type_map.get(capability, PacketType.PLAN)
-    packet = CXPPacket(
-        origin="web-ui",
-        type=ptype,
-        capability=capability,
-        priority=5,
-        task_id=uuid.uuid4().hex[:8],
-        payload=Payload(goal=goal, instructions=goal, context=""),
-    )
     if _nc:
-        await _nc.jetstream().publish(f"cxp.cap.{capability}", packet.model_dump_json().encode())
+        await _nc.jetstream().publish(f"cxp.cap.{packet.capability}", packet.model_dump_json().encode())
     return JSONResponse({"task_id": packet.task_id, "packet_id": packet.id[:8]})
 
 
@@ -256,6 +346,14 @@ async def clear_halt():
     kv = await _kv(KV_STATE)
     await kv.put("halt", json.dumps({"halted": False}).encode())
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/candidates/{candidate_id}/promote")
+async def promote_candidate_route(candidate_id: str):
+    try:
+        return JSONResponse(await promote_candidate(candidate_id))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
 
 
 @app.get("/")
@@ -346,6 +444,11 @@ tr[data-clickable]:hover { background: #1a1a0a; cursor: pointer; }
   </div>
 </div>
 
+<div class="panel" style="margin-bottom:8px">
+  <div class="panel-title">Candidate Evaluations</div>
+  <table><thead><tr><th>Candidate</th><th>Role</th><th>Baseline</th><th>Candidate</th><th>Recommendation</th><th></th></tr></thead><tbody id="candidate-rows"></tbody></table>
+</div>
+
 <div class="row" style="height:200px" id="mid-row">
   <div class="panel resizable" style="flex:1.5;display:flex;flex-direction:column" id="pkt-panel">
     <div class="panel-title">Packets — newest first, ⟳ live rows pinned at top, click a finished row for output</div>
@@ -389,6 +492,15 @@ document.getElementById('goal-input').addEventListener('keydown', e => { if(e.ke
 
 async function clearHalt() {
   await fetch('/api/halt/clear', {method:'POST'});
+  refresh();
+}
+
+async function promoteCandidate(candidateId) {
+  const response = await fetch(`/api/candidates/${encodeURIComponent(candidateId)}/promote`, {method:'POST'});
+  const result = await response.json();
+  document.getElementById('submit-status').textContent = result.error
+    ? '✗ ' + result.error
+    : `✓ promoted ${result.target_role} rev=${result.revision}`;
   refresh();
 }
 
@@ -467,6 +579,20 @@ async function refresh() {
     : Object.keys(ts.streaks).map(tier => {
         const active = Number(tier) === ts.active_tier;
         return `<tr><td class="c">Tier ${tier}</td><td>${ts.streaks[tier]} / ${ts.streak_target}</td><td class="${active ? 'g' : 'd'}">${active ? '● active' : ''}</td></tr>`;
+      }).join('');
+
+  const evaluations = data.candidate_evaluations || [];
+  document.getElementById('candidate-rows').innerHTML = evaluations.length === 0
+    ? `<tr><td class="d" colspan="6">no evaluated candidates</td></tr>`
+    : evaluations.map(e => {
+        const promotable = e.recommendation === 'recommend_promotion';
+        const recClass = promotable ? 'g' : e.recommendation?.startsWith('reject') ? 'r' : 'y';
+        const action = promotable
+          ? `<button onclick="promoteCandidate('${esc(e.candidate_id)}')">Promote</button>`
+          : '';
+        const baseline = e.baseline_pass_rate == null ? '-' : `${(e.baseline_pass_rate * 100).toFixed(0)}%`;
+        const candidate = e.candidate_pass_rate == null ? '-' : `${(e.candidate_pass_rate * 100).toFixed(0)}%`;
+        return `<tr><td class="d">${esc(e.candidate_id)}</td><td>${esc(e.target_role || '-')}</td><td>${baseline}</td><td>${candidate}</td><td class="${recClass}">${esc(e.recommendation || '-')}</td><td>${action}</td></tr>`;
       }).join('');
 
   // Packets table only ever holds FINISHED packets (on_result fires on
@@ -571,4 +697,5 @@ async def get_state():
         "stream_health": await get_stream_health(),
         "duplicate_packets": get_duplicate_packets(),
         "tier_status": await get_tier_status(),
+        "candidate_evaluations": await get_candidate_evaluations(),
     })

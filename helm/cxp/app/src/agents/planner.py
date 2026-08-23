@@ -7,7 +7,9 @@ import logging
 
 from opentelemetry.trace import Status, StatusCode
 
-from ..agent_shell import AgentShell, _strip_trailing_commas, strip_code_fence
+from ..agent_shell import AgentShell
+from ..candidate_evaluation import build_self_improvement_inputs
+from ..contracts import ContractParseError, parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 from ..telemetry import get_tracer
 
@@ -48,15 +50,6 @@ class PlannerAgent(AgentShell):
         raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}",
                               packet_id=packet.id)
 
-        raw = strip_code_fence(raw)
-        # Small local models frequently write a trailing comma after the
-        # last property/element -- legal in Python dict/list literals,
-        # invalid in strict JSON. Found live 2026-08-21 via a full OTel
-        # span capture (packet dcb5043e, docs/otel-setup.md): a genuinely
-        # complete, well-formed response failed to parse purely because
-        # of this. A no-op on already-valid JSON.
-        cleaned = _strip_trailing_commas(raw)
-
         # Own span (not just llm.call, which already ended by the time
         # we're here) so a still-broken parse after the cleanup above
         # shows up as a real ERROR-status span -- llm.call has no way to
@@ -66,29 +59,80 @@ class PlannerAgent(AgentShell):
         tracer = get_tracer(__name__)
         with tracer.start_as_current_span("decomposition.parse") as span:
             span.set_attribute("packet.id", packet.id)
-            span.set_attribute("json.sanitized", cleaned != raw)
-            # strict=False: small local models sometimes emit a literal
-            # unescaped control character (e.g. a raw newline) inside a
-            # string value -- strict JSON rejects that outright,
-            # strict=False tolerates it. Doesn't fix every malformation
-            # this model produces (missing delimiters, truncated output),
-            # just this specific recurring class. A malformed
-            # decomposition used to crash _execute() uncaught, which
-            # halts the ENTIRE swarm over one goal's LLM hiccup --
-            # verifier already degrades gracefully on the same failure
-            # (see its own JSONDecodeError handling); planner should too,
-            # rather than being the one agent whose bad output blocks
-            # everyone else's work.
             try:
-                sub_tasks: list[dict] = json.loads(cleaned, strict=False)
-            except json.JSONDecodeError as e:
+                plan = parse_contract("plan", raw)
+            except ContractParseError as e:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.set_attribute("json.parse_error", str(e))
                 span.set_attribute("llm.response", raw)
+                await self.record_attempt(
+                    packet=packet,
+                    capability="plan",
+                    raw_response=raw,
+                    validation_status="contract_error",
+                    validation_issues=[str(e)],
+                    outcome="contract_error",
+                    environment_healthy=True,
+                )
+                reflect = CXPPacket(
+                    origin=self.agent_id,
+                    type=PacketType.REFLECT,
+                    capability="reflect",
+                    priority=3,
+                    task_id=packet.task_id,
+                    parent_packet_id=packet.id,
+                    payload=Payload(
+                        goal="Self-improve: repair planner structured output",
+                        instructions=f"Plan contract error: {e}",
+                        context=raw,
+                        inputs=build_self_improvement_inputs(
+                            target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
+                        ),
+                    ),
+                )
+                await self.emit_packet(reflect)
                 await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
                 return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
-        for task in sub_tasks:
+            await self.record_attempt(
+                packet=packet,
+                capability="plan",
+                raw_response=raw,
+                normalized_response=plan.model_dump_json(),
+                validation_status="valid",
+                environment_healthy=True,
+            )
+
+        for detail in plan.dropped_subtasks:
+            await self.record_validation_failure("malformed sub-task", detail)
+
+        if not plan.subtasks and plan.source_count > 0:
+            # A structurally valid parse where every subtask still failed
+            # PlannedTask validation is the same missed-learning-signal shape
+            # as a hard contract error -- only the JSONDecodeError branch
+            # above used to request planner feedback, so this case silently
+            # produced zero self-improvement signal.
+            detail = f"All {plan.source_count} sub-task(s) failed validation: {'; '.join(plan.dropped_subtasks)}"
+            reflect = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="reflect",
+                priority=3,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal="Self-improve: repair planner structured output",
+                    instructions=f"Plan contract error: {detail}",
+                    context=raw,
+                    inputs=build_self_improvement_inputs(
+                        target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
+                    ),
+                ),
+            )
+            await self.emit_packet(reflect)
+
+        for task_model in plan.subtasks:
+            task = task_model.model_dump()
             raw_type = task.get("type", "code")
             # capability routes to cxp.cap.<capability>, and only code/verify/
             # reflect have a subscribed consumer. task.get(..., "any") used to
@@ -132,6 +176,7 @@ class PlannerAgent(AgentShell):
                         goal=_coerce_str(task.get("goal", "")),
                         instructions=_coerce_str(task.get("instructions", "")),
                         context=packet.payload.output or packet.payload.context,
+                        inputs=dict(packet.payload.inputs),
                     ),
                     routing_hints=RoutingHints(next_type=PacketType.VERIFY),
                 )
@@ -141,4 +186,4 @@ class PlannerAgent(AgentShell):
             child.append_trace(self.agent_id, "created", "spawned by planner")
             await self.emit_packet(child)
 
-        return f"Spawned {len(sub_tasks)} sub-packets for task {packet.task_id[:8]}"
+        return f"Spawned {len(plan.subtasks)} sub-packets for task {packet.task_id[:8]}"

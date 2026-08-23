@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..agent_shell import AgentShell
+from ..contracts import parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 BASE_SYSTEM = """You are a specialist execution worker in a distributed AI swarm.
@@ -18,15 +19,34 @@ class ExecutorAgent(AgentShell):
         super().__init__(agent_id, capabilities=capabilities or ["code"])
 
     async def _execute(self, packet: CXPPacket) -> str:
-        # fetched per-task (not at import time) so a reflect update is picked
-        # up on the very next task, from every replica, without a pod restart
-        skill, skill_revision = await self.get_skill_with_revision("executor", fallback_path="/skills/executor_v1.md")
+        candidate_id = packet.payload.inputs.get("candidate_id")
+        candidate = await self.get_skill_candidate(candidate_id) if candidate_id else None
+        if candidate and candidate.get("target_role") == "executor":
+            skill = candidate.get("content", "")
+            skill_revision = candidate_id
+        else:
+            # Fetched per-task (not at import time) so active revisions are
+            # visible to every replica without a pod restart.
+            skill, skill_revision = await self.get_skill_with_revision(
+                "executor", fallback_path="/skills/executor_v1.md"
+            )
         prompt = (
             f"Instructions: {packet.payload.instructions}\n\n"
             f"Goal: {packet.payload.goal}\n\n"
             f"Context:\n{packet.payload.context}"
         )
-        output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
+        raw_output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
+        artifact = parse_contract("code", raw_output)
+        output = artifact.content
+        await self.record_attempt(
+            packet=packet,
+            capability="code",
+            raw_response=raw_output,
+            normalized_response=output,
+            validation_status="valid",
+            environment_healthy=True,
+            skill_revision=skill_revision,
+        )
 
         # spawn a verify packet automatically — skill_revision rides along in
         # `inputs` so verifier can log which skill version produced this
@@ -42,7 +62,7 @@ class ExecutorAgent(AgentShell):
                 goal=f"Verify: {packet.payload.goal}",
                 instructions="Check correctness, completeness, and safety of the artifact below.",
                 context=output,
-                inputs={"skill_revision": skill_revision, "capability": "code"},
+                inputs={**packet.payload.inputs, "skill_revision": skill_revision, "capability": "code"},
             ),
             routing_hints=RoutingHints(next_type=PacketType.REFLECT),
         )

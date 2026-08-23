@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.contracts import PlanResult, PlannedTask
 from src.agents.planner import PlannerAgent, _coerce_str
 from src.packet import CXPPacket, PacketType, Payload
 
@@ -52,7 +53,116 @@ async def test_malformed_json_degrades_gracefully_instead_of_crashing(monkeypatc
     result = await p._execute(_goal_packet())
 
     assert "malformed JSON" in result
-    emitted.assert_not_called()
+    emitted.assert_awaited_once()
+    assert emitted.await_args.args[0].capability == "reflect"
+
+
+async def test_planner_delegates_decomposition_parsing_to_contract(monkeypatch):
+    p, emitted = await _planner(monkeypatch, "raw model output")
+    parsed = PlanResult(subtasks=[PlannedTask(
+        type="code",
+        capability="code",
+        goal="write a function",
+        instructions="return code",
+    )])
+    calls = []
+
+    def fake_parse_contract(capability, raw_text):
+        calls.append((capability, raw_text))
+        return parsed
+
+    import src.agents.planner as planner_module
+    monkeypatch.setattr(planner_module, "parse_contract", fake_parse_contract)
+
+    await p._execute(_goal_packet())
+
+    assert calls == [("plan", "raw model output")]
+    emitted.assert_awaited_once()
+
+
+async def test_planner_records_contract_failure_as_learnable_evidence(monkeypatch):
+    p, _ = await _planner(monkeypatch, "not valid json")
+    recorded = AsyncMock()
+    monkeypatch.setattr(p, "record_attempt", recorded)
+
+    await p._execute(_goal_packet())
+
+    recorded.assert_awaited_once()
+    evidence = recorded.await_args.kwargs
+    assert evidence["capability"] == "plan"
+    assert evidence["validation_status"] == "contract_error"
+    assert evidence["environment_healthy"] is True
+    assert evidence["raw_response"] == "not valid json"
+
+
+async def test_planner_contract_failure_requests_planner_targeted_candidate(monkeypatch):
+    p, emitted = await _planner(monkeypatch, "not valid json")
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+    packet = _goal_packet()
+
+    await p._execute(packet)
+
+    reflect_packet: CXPPacket = emitted.await_args.args[0]
+    assert reflect_packet.capability == "reflect"
+    assert reflect_packet.payload.inputs == {
+        "target_role": "planner",
+        "source_attempt_id": packet.id,
+        "evidence_class": "contract",
+    }
+
+
+async def test_planner_records_normalized_contract_evidence_on_success(monkeypatch):
+    raw = """[
+        {
+            "type": "code",
+            "goal": "write a function",
+            "instructions": "return code"
+        }
+    ]"""
+    p, _ = await _planner(monkeypatch, raw)
+    recorded = AsyncMock()
+    monkeypatch.setattr(p, "record_attempt", recorded)
+
+    await p._execute(_goal_packet())
+
+    evidence = recorded.await_args.kwargs
+    assert evidence["capability"] == "plan"
+    assert evidence["validation_status"] == "valid"
+    assert evidence["raw_response"] == raw
+    assert '"capability":"code"' in evidence["normalized_response"]
+
+
+async def test_planner_propagates_candidate_evaluation_inputs_to_child(monkeypatch):
+    sub_tasks = [{"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"}]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+    packet = _goal_packet()
+    packet.payload.inputs = {"candidate_id": "candidate-1"}
+
+    await p._execute(packet)
+
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.payload.inputs == {"candidate_id": "candidate-1"}
+
+
+async def test_planner_requests_planner_candidate_when_every_subtask_is_invalid(monkeypatch):
+    sub_tasks = [
+        {"type": "code", "capability": "code", "priority": "not-a-number", "goal": "a", "instructions": "x"},
+        {"type": "code", "capability": "code", "priority": "also-bad", "goal": "b", "instructions": "y"},
+    ]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+
+    result = await p._execute(_goal_packet())
+
+    # A silent zero-subtask outcome after a structurally valid parse is the
+    # same missed-learning-signal shape as a hard contract error -- it must
+    # still request planner-targeted feedback, not just log locally.
+    emitted.assert_awaited_once()
+    reflect_packet: CXPPacket = emitted.await_args.args[0]
+    assert reflect_packet.capability == "reflect"
+    assert reflect_packet.payload.inputs["target_role"] == "planner"
+    assert "Spawned 0 sub-packets" in result
 
 
 async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):
@@ -141,10 +251,13 @@ async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
         {"type": "code", "capability": "code", "goal": "good one", "instructions": "y"},
     ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    validation_failure = AsyncMock()
+    monkeypatch.setattr(p, "record_validation_failure", validation_failure)
 
     result = await p._execute(_goal_packet())
 
     emitted.assert_awaited_once()
     child: CXPPacket = emitted.await_args.args[0]
     assert child.payload.goal == "good one"
-    assert "Spawned 2 sub-packets" in result
+    assert "Spawned 1 sub-packets" in result
+    validation_failure.assert_awaited_once()

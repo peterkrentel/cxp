@@ -60,6 +60,9 @@ class FakeKV:
     async def delete(self, key: str) -> None:
         self._data.pop(key, None)
 
+    async def keys(self) -> list[str]:
+        return list(self._data)
+
 
 class DummyAgent(AgentShell):
     """Minimal concrete AgentShell -- _execute is never called by these

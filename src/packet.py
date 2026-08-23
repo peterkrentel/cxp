@@ -60,6 +60,7 @@ class RoutingHints(BaseModel):
 
 class CXPPacket(BaseModel):
     id: str = Field(default_factory=_uid)
+    schema_version: str = "1.0"
     created_at: str = Field(default_factory=_now)
     origin: str = "human"
     target: str = "any"        # agent-id or "any"

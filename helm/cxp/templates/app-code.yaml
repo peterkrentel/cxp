@@ -25,6 +25,8 @@ data:
 {{ .Files.Get "app/src/__init__.py" | indent 4 }}
   packet.py: |
 {{ .Files.Get "app/src/packet.py" | indent 4 }}
+  contracts.py: |
+{{ .Files.Get "app/src/contracts.py" | indent 4 }}
   agent_shell.py: |
 {{ .Files.Get "app/src/agent_shell.py" | indent 4 }}
   memory.py: |

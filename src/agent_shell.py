@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -275,6 +276,39 @@ class AgentShell(ABC):
         failure shape actually recurs."""
         log.error("[%s] validation failure (%s): %s", self.agent_id, context, detail)
         self._memory.add_semantic(f"[{self.agent_id}] {context}: {detail[:300]}")
+        await self._memory.save()
+
+    async def record_attempt(
+        self,
+        *,
+        packet: CXPPacket,
+        capability: str,
+        raw_response: str,
+        normalized_response: str = "",
+        validation_status: str,
+        validation_issues: list[str] | None = None,
+        outcome: str = "completed",
+        environment_healthy: bool = True,
+        skill_revision: int | None = None,
+    ) -> None:
+        """Persist LLM output evidence independently of optional OTel export."""
+        prompt = "\n".join((packet.payload.goal, packet.payload.instructions, packet.payload.context))
+        self._memory.add_attempt({
+            "attempt_id": packet.id,
+            "packet_id": packet.id,
+            "task_id": packet.task_id,
+            "role": self.agent_id,
+            "capability": capability,
+            "schema_version": packet.schema_version,
+            "skill_revision": skill_revision,
+            "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
+            "raw_response": raw_response,
+            "normalized_response": normalized_response,
+            "validation_status": validation_status,
+            "validation_issues": validation_issues or [],
+            "outcome": outcome,
+            "environment_healthy": environment_healthy,
+        })
         await self._memory.save()
 
     @staticmethod

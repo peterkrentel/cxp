@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.contracts import PlanResult, PlannedTask
 from src.agents.planner import PlannerAgent, _coerce_str
 from src.packet import CXPPacket, PacketType, Payload
 
@@ -53,6 +54,65 @@ async def test_malformed_json_degrades_gracefully_instead_of_crashing(monkeypatc
 
     assert "malformed JSON" in result
     emitted.assert_not_called()
+
+
+async def test_planner_delegates_decomposition_parsing_to_contract(monkeypatch):
+    p, emitted = await _planner(monkeypatch, "raw model output")
+    parsed = PlanResult(subtasks=[PlannedTask(
+        type="code",
+        capability="code",
+        goal="write a function",
+        instructions="return code",
+    )])
+    calls = []
+
+    def fake_parse_contract(capability, raw_text):
+        calls.append((capability, raw_text))
+        return parsed
+
+    import src.agents.planner as planner_module
+    monkeypatch.setattr(planner_module, "parse_contract", fake_parse_contract)
+
+    await p._execute(_goal_packet())
+
+    assert calls == [("plan", "raw model output")]
+    emitted.assert_awaited_once()
+
+
+async def test_planner_records_contract_failure_as_learnable_evidence(monkeypatch):
+    p, _ = await _planner(monkeypatch, "not valid json")
+    recorded = AsyncMock()
+    monkeypatch.setattr(p, "record_attempt", recorded)
+
+    await p._execute(_goal_packet())
+
+    recorded.assert_awaited_once()
+    evidence = recorded.await_args.kwargs
+    assert evidence["capability"] == "plan"
+    assert evidence["validation_status"] == "contract_error"
+    assert evidence["environment_healthy"] is True
+    assert evidence["raw_response"] == "not valid json"
+
+
+async def test_planner_records_normalized_contract_evidence_on_success(monkeypatch):
+    raw = """[
+        {
+            "type": "code",
+            "goal": "write a function",
+            "instructions": "return code"
+        }
+    ]"""
+    p, _ = await _planner(monkeypatch, raw)
+    recorded = AsyncMock()
+    monkeypatch.setattr(p, "record_attempt", recorded)
+
+    await p._execute(_goal_packet())
+
+    evidence = recorded.await_args.kwargs
+    assert evidence["capability"] == "plan"
+    assert evidence["validation_status"] == "valid"
+    assert evidence["raw_response"] == raw
+    assert '"capability":"code"' in evidence["normalized_response"]
 
 
 async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):

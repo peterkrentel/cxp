@@ -13,6 +13,7 @@ from typing import Any
 
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")
 LOCK_PATH = MEMORY_PATH + ".lock"
+MAX_ATTEMPTS = 200
 
 
 @dataclass
@@ -41,6 +42,9 @@ class MemoryStore:
     episodic: list[dict[str, Any]] = field(default_factory=list)
     # semantic: stable facts extracted by reflect agent
     semantic: list[str] = field(default_factory=list)
+    # attempts: durable LLM-output and validation evidence used to distinguish
+    # platform interruptions from learnable contract failures.
+    attempts: list[dict[str, Any]] = field(default_factory=list)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     # this process's contribution since the last save() — merging deltas
     # (rather than writing the full in-memory snapshot) is what keeps
@@ -48,6 +52,7 @@ class MemoryStore:
     _pending_rep: dict[tuple[str, str], list[int]] = field(default_factory=dict, repr=False)
     _pending_episodic: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _pending_semantic: list[str] = field(default_factory=list, repr=False)
+    _pending_attempts: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     def record_success(self, agent_id: str, capability: str) -> None:
         self._bump(agent_id, capability, successes=1)
@@ -90,6 +95,13 @@ class MemoryStore:
             if len(self.semantic) > 200:
                 self.semantic = self.semantic[-200:]
 
+    def add_attempt(self, attempt: dict[str, Any]) -> None:
+        entry = {**attempt, "ts": datetime.now(timezone.utc).isoformat()}
+        self.attempts.append(entry)
+        self._pending_attempts.append(entry)
+        if len(self.attempts) > MAX_ATTEMPTS:
+            self.attempts = self.attempts[-MAX_ATTEMPTS:]
+
     def all_reputations(self) -> list[AgentReputation]:
         out = []
         for cap_map in self.reputation.values():
@@ -109,8 +121,9 @@ class MemoryStore:
             pending_rep, self._pending_rep = self._pending_rep, {}
             pending_episodic, self._pending_episodic = self._pending_episodic, []
             pending_semantic, self._pending_semantic = self._pending_semantic, []
+            pending_attempts, self._pending_attempts = self._pending_attempts, []
             data = await asyncio.to_thread(
-                self._locked_merge, pending_rep, pending_episodic, pending_semantic
+                self._locked_merge, pending_rep, pending_episodic, pending_semantic, pending_attempts
             )
             self._apply_disk_state(data)
 
@@ -119,6 +132,7 @@ class MemoryStore:
         pending_rep: dict[tuple[str, str], list[int]],
         pending_episodic: list[dict[str, Any]],
         pending_semantic: list[str],
+        pending_attempts: list[dict[str, Any]],
     ) -> dict:
         os.makedirs(os.path.dirname(MEMORY_PATH), exist_ok=True)
         with open(LOCK_PATH, "w") as lockf:
@@ -138,6 +152,9 @@ class MemoryStore:
                     if fact not in semantic:
                         semantic.append(fact)
                 data["semantic"] = semantic[-200:]
+                attempts = data.setdefault("attempts", [])
+                attempts.extend(pending_attempts)
+                data["attempts"] = attempts[-MAX_ATTEMPTS:]
                 with open(MEMORY_PATH, "w") as f:
                     json.dump(data, f, indent=2)
                 return data
@@ -147,12 +164,12 @@ class MemoryStore:
     @staticmethod
     def _read_disk() -> dict:
         if not os.path.exists(MEMORY_PATH):
-            return {"reputation": {}, "episodic": [], "semantic": []}
+            return {"reputation": {}, "episodic": [], "semantic": [], "attempts": []}
         try:
             with open(MEMORY_PATH) as f:
                 return json.load(f)
         except Exception:
-            return {"reputation": {}, "episodic": [], "semantic": []}
+            return {"reputation": {}, "episodic": [], "semantic": [], "attempts": []}
 
     def _apply_disk_state(self, data: dict) -> None:
         """Refresh the in-memory read cache from the merged on-disk truth."""
@@ -163,6 +180,7 @@ class MemoryStore:
         self.reputation = reputation
         self.episodic = data.get("episodic", [])
         self.semantic = data.get("semantic", [])
+        self.attempts = data.get("attempts", [])
 
     @classmethod
     def load(cls) -> "MemoryStore":

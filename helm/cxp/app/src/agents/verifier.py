@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
-from ..agent_shell import AgentShell, strip_code_fence
+from ..agent_shell import AgentShell
+from ..contracts import ContractParseError, parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 log = logging.getLogger(__name__)
@@ -38,17 +39,28 @@ class VerifierAgent(AgentShell):
             f"Artifact to verify:\n{packet.payload.context}"
         )
         raw = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
-        raw = strip_code_fence(raw)
 
-        # Better error handling for JSON parsing. strict=False: tolerate a
-        # literal unescaped control character in a string value, which small
-        # local models occasionally emit.
+        validation_status = "valid"
+        validation_issues: list[str] = []
         try:
-            result = json.loads(raw, strict=False)
-        except json.JSONDecodeError as e:
+            result = parse_contract("verify", raw).model_dump()
+        except ContractParseError as e:
+            validation_status = "contract_error"
+            validation_issues = [str(e)]
             await self.record_validation_failure("verify response JSON parse", f"{e}\nRaw: {raw[:200]}")
             # Default to fail if we can't parse
             result = {"score": 0.0, "passed": False, "issues": [f"Parse error: {e}"], "suggestion": "Malformed response"}
+
+        await self.record_attempt(
+            packet=packet,
+            capability="verify",
+            raw_response=raw,
+            normalized_response=json.dumps(result, separators=(",", ":")),
+            validation_status=validation_status,
+            validation_issues=validation_issues,
+            environment_healthy=True,
+            skill_revision=packet.payload.inputs.get("skill_revision"),
+        )
 
         packet.quality_score = float(result.get("score") if result.get("score") is not None else 0.5)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..agent_shell import AgentShell
+from ..contracts import parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 BASE_SYSTEM = """You are a specialist execution worker in a distributed AI swarm.
@@ -26,7 +27,18 @@ class ExecutorAgent(AgentShell):
             f"Goal: {packet.payload.goal}\n\n"
             f"Context:\n{packet.payload.context}"
         )
-        output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
+        raw_output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
+        artifact = parse_contract("code", raw_output)
+        output = artifact.content
+        await self.record_attempt(
+            packet=packet,
+            capability="code",
+            raw_response=raw_output,
+            normalized_response=output,
+            validation_status="valid",
+            environment_healthy=True,
+            skill_revision=skill_revision,
+        )
 
         # spawn a verify packet automatically — skill_revision rides along in
         # `inputs` so verifier can log which skill version produced this

@@ -66,6 +66,8 @@ spans. Each span carries:
 |---|---|
 | `agent.id` | which replica handled the call (e.g. `planner-1`) |
 | `packet.id` | the packet this call was for — cross-reference against the dashboard's packet list |
+| `task.id` | the whole task's lineage — every packet (plan/code/verify/reflect/assess/deploy) spawned for one submitted goal shares this, so you can filter Tempo to one task's full timeline |
+| `parent.packet.id` | the packet that spawned this one — walk this to reconstruct the exact plan→code→verify→... chain, since `task.id` alone doesn't give ordering |
 | `llm.system_prompt` / `llm.user_prompt` | the full, untruncated prompt sent to Ollama |
 | `llm.response` | the full response, if the call completed normally |
 | `llm.partial_response` | whatever content had been generated so far, if the call timed out (`llm.timed_out: true`) — `llm.response` is absent in this case, not empty |

@@ -203,3 +203,40 @@ async def test_failed_verification_targets_executor_candidate(monkeypatch):
         "target_role": "executor",
         "source_attempt_id": packet.id,
     }
+
+
+async def test_executor_uses_staged_candidate_without_mutating_or_reading_active_skill(monkeypatch):
+    from src.agents import executor as executor_module
+    from src.agents.executor import ExecutorAgent
+
+    agent = ExecutorAgent()
+    active_skill = AsyncMock(return_value=("active skill", 7))
+    monkeypatch.setattr(agent, "get_skill_with_revision", active_skill)
+    monkeypatch.setattr(agent, "get_skill_candidate", AsyncMock(return_value={
+        "target_role": "executor",
+        "content": "candidate skill",
+    }))
+    llm = AsyncMock(return_value="candidate artifact")
+    monkeypatch.setattr(agent, "llm", llm)
+    monkeypatch.setattr(agent, "emit_packet", AsyncMock())
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(
+        executor_module,
+        "parse_contract",
+        lambda *_args: ArtifactResult(content="candidate artifact", format="text"),
+    )
+    packet = CXPPacket(
+        type=PacketType.CODE,
+        capability="code",
+        payload=Payload(
+            goal="write code",
+            instructions="return an artifact",
+            inputs={"candidate_id": "candidate-1"},
+        ),
+    )
+
+    await agent._execute(packet)
+
+    active_skill.assert_not_awaited()
+    assert "candidate skill" in llm.await_args.args[0]
+    assert agent.record_attempt.await_args.kwargs["skill_revision"] == "candidate-1"

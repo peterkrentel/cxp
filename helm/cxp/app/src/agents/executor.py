@@ -19,9 +19,17 @@ class ExecutorAgent(AgentShell):
         super().__init__(agent_id, capabilities=capabilities or ["code"])
 
     async def _execute(self, packet: CXPPacket) -> str:
-        # fetched per-task (not at import time) so a reflect update is picked
-        # up on the very next task, from every replica, without a pod restart
-        skill, skill_revision = await self.get_skill_with_revision("executor", fallback_path="/skills/executor_v1.md")
+        candidate_id = packet.payload.inputs.get("candidate_id")
+        candidate = await self.get_skill_candidate(candidate_id) if candidate_id else None
+        if candidate and candidate.get("target_role") == "executor":
+            skill = candidate.get("content", "")
+            skill_revision = candidate_id
+        else:
+            # Fetched per-task (not at import time) so active revisions are
+            # visible to every replica without a pod restart.
+            skill, skill_revision = await self.get_skill_with_revision(
+                "executor", fallback_path="/skills/executor_v1.md"
+            )
         prompt = (
             f"Instructions: {packet.payload.instructions}\n\n"
             f"Goal: {packet.payload.goal}\n\n"

@@ -130,6 +130,7 @@ class PlannerAgent(AgentShell):
                         goal=_coerce_str(task.get("goal", "")),
                         instructions=_coerce_str(task.get("instructions", "")),
                         context=packet.payload.output or packet.payload.context,
+                        inputs=dict(packet.payload.inputs),
                     ),
                     routing_hints=RoutingHints(next_type=PacketType.VERIFY),
                 )

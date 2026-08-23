@@ -115,6 +115,19 @@ async def test_planner_records_normalized_contract_evidence_on_success(monkeypat
     assert '"capability":"code"' in evidence["normalized_response"]
 
 
+async def test_planner_propagates_candidate_evaluation_inputs_to_child(monkeypatch):
+    sub_tasks = [{"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"}]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+    packet = _goal_packet()
+    packet.payload.inputs = {"candidate_id": "candidate-1"}
+
+    await p._execute(packet)
+
+    child: CXPPacket = emitted.await_args.args[0]
+    assert child.payload.inputs == {"candidate_id": "candidate-1"}
+
+
 async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):
     sub_tasks = [{"type": "code", "goal": "write a function", "instructions": "do it"}]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))

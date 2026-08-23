@@ -24,6 +24,22 @@ async def test_skill_candidate_is_stored_in_separate_kv_bucket(agent, fake_kv):
     assert b'"target_role": "planner"' in entry.value
 
 
+async def test_staged_skill_candidate_can_be_read_without_active_skill_lookup(agent, fake_kv):
+    agent._kv_cache[KV_SKILL_CANDIDATES] = fake_kv
+    await agent.put_skill_candidate("candidate-1", {
+        "target_role": "executor",
+        "content": "Return raw YAML only.",
+        "source_attempt_id": "attempt-1",
+        "rationale": "Remove fences.",
+    })
+
+    candidate = await agent.get_skill_candidate("candidate-1")
+
+    assert candidate is not None
+    assert candidate["target_role"] == "executor"
+    assert candidate["content"] == "Return raw YAML only."
+
+
 async def test_candidate_evaluation_report_is_stored_separately(agent, fake_kv):
     agent._kv_cache[KV_CANDIDATE_EVALUATIONS] = fake_kv
 

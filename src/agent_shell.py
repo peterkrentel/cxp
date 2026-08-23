@@ -248,6 +248,15 @@ class AgentShell(ABC):
         kv = await self._kv(KV_SKILL_CANDIDATES)
         return await kv.put(key, json.dumps(candidate).encode())
 
+    async def get_skill_candidate(self, key: str) -> dict | None:
+        """Read a staged candidate without consulting active skill text."""
+        try:
+            kv = await self._kv(KV_SKILL_CANDIDATES)
+            entry = await kv.get(key)
+            return json.loads(entry.value.decode())
+        except Exception:
+            return None
+
     async def put_candidate_evaluation(self, key: str, report: dict) -> int:
         """Store a promotion recommendation without applying a candidate."""
         kv = await self._kv(KV_CANDIDATE_EVALUATIONS)
@@ -301,7 +310,7 @@ class AgentShell(ABC):
         validation_issues: list[str] | None = None,
         outcome: str = "completed",
         environment_healthy: bool = True,
-        skill_revision: int | None = None,
+        skill_revision: int | str | None = None,
     ) -> None:
         """Persist LLM output evidence independently of optional OTel export."""
         prompt = "\n".join((packet.payload.goal, packet.payload.instructions, packet.payload.context))

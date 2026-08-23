@@ -350,10 +350,10 @@ async def clear_halt():
 
 @app.post("/api/candidates/{candidate_id}/promote")
 async def promote_candidate_route(candidate_id: str):
-  try:
-    return JSONResponse(await promote_candidate(candidate_id))
-  except ValueError as exc:
-    return JSONResponse({"error": str(exc)}, status_code=409)
+    try:
+        return JSONResponse(await promote_candidate(candidate_id))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
 
 
 @app.get("/")

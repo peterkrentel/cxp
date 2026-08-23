@@ -34,6 +34,7 @@ spec:
                   cp /cm/root/requirements.txt /app/requirements.txt
                   cp /cm/root/run_tests.py /app/tests/run_tests.py
                   cp /cm/root/check_plateau.py /app/tests/check_plateau.py
+                  cp /cm/root/evaluate_candidate.py /app/tests/evaluate_candidate.py
                   cp /cm/src/*.py /app/src/
                   cp /cm/agents/*.py /app/src/agents/
                   pip install --quiet --target /app/packages -r /app/requirements.txt
@@ -59,6 +60,11 @@ spec:
 
                   python -u /app/tests/run_tests.py
                   TEST_EXIT=$?
+
+                  # At most one healthy, previously unevaluated candidate is
+                  # compared after each ordinary suite. Its recommendation is
+                  # published to KV; it never promotes active skill text.
+                  python -u /app/tests/evaluate_candidate.py || echo "⚠ candidate evaluation skipped"
 
                   # Push results to git if credentials are available. Clones
                   # the real main and commits on top of it (rather than

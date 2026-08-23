@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.candidate_evaluation import evaluate_candidate
+from src.candidate_evaluation import evaluate_candidate, select_evaluable_candidate
 
 
 def _result(label: str, status: str) -> dict:
@@ -69,3 +69,29 @@ def test_candidate_recommends_promotion_for_held_out_improvement_without_regress
     assert report["eligible"] is True
     assert report["baseline_pass_rate"] == 0.5
     assert report["candidate_pass_rate"] == 1.0
+
+
+def test_select_evaluable_candidate_skips_unhealthy_and_already_reported_candidates():
+    candidate = select_evaluable_candidate(
+        candidates={
+            "candidate-b": {"source_attempt_id": "attempt-b"},
+            "candidate-a": {"source_attempt_id": "attempt-a"},
+            "candidate-c": {"source_attempt_id": "attempt-c"},
+        },
+        attempts={
+            "attempt-a": {"environment_healthy": False},
+            "attempt-b": {"environment_healthy": True},
+            "attempt-c": {"environment_healthy": True},
+        },
+        reports={"candidate-b": {"recommendation": "reject_regression"}},
+    )
+
+    assert candidate == ("candidate-c", {"source_attempt_id": "attempt-c"})
+
+
+def test_select_evaluable_candidate_returns_none_without_healthy_unevaluated_source():
+    assert select_evaluable_candidate(
+        candidates={"candidate-a": {"source_attempt_id": "attempt-a"}},
+        attempts={"attempt-a": {"environment_healthy": False}},
+        reports={},
+    ) is None

@@ -9,6 +9,23 @@ def _pass_rate(results: list[dict[str, Any]]) -> float:
     return sum(result.get("status") == "PASS" for result in results) / len(results)
 
 
+def select_evaluable_candidate(
+    *,
+    candidates: dict[str, dict[str, Any]],
+    attempts: dict[str, dict[str, Any]],
+    reports: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any]] | None:
+    """Choose one healthy, unevaluated candidate in stable key order."""
+    for candidate_id in sorted(candidates):
+        if candidate_id in reports:
+            continue
+        candidate = candidates[candidate_id]
+        source = attempts.get(candidate.get("source_attempt_id", ""))
+        if source and source.get("environment_healthy", True):
+            return candidate_id, candidate
+    return None
+
+
 def evaluate_candidate(
     *,
     candidate_id: str,

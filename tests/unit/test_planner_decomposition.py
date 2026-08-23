@@ -107,6 +107,7 @@ async def test_planner_contract_failure_requests_planner_targeted_candidate(monk
     assert reflect_packet.payload.inputs == {
         "target_role": "planner",
         "source_attempt_id": packet.id,
+        "evidence_class": "contract",
     }
 
 
@@ -230,10 +231,13 @@ async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
         {"type": "code", "capability": "code", "goal": "good one", "instructions": "y"},
     ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    validation_failure = AsyncMock()
+    monkeypatch.setattr(p, "record_validation_failure", validation_failure)
 
     result = await p._execute(_goal_packet())
 
     emitted.assert_awaited_once()
     child: CXPPacket = emitted.await_args.args[0]
     assert child.payload.goal == "good one"
-    assert "Spawned 2 sub-packets" in result
+    assert "Spawned 1 sub-packets" in result
+    validation_failure.assert_awaited_once()

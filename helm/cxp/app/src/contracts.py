@@ -31,6 +31,7 @@ class PlannedTask(BaseModel):
 class PlanResult(BaseModel):
     subtasks: list[PlannedTask]
     source_count: int = Field(default=0, ge=0)
+    dropped_subtasks: list[str] = Field(default_factory=list)
 
 
 class ArtifactResult(BaseModel):
@@ -68,9 +69,10 @@ def _unwrap_outer_fence(text: str) -> str:
     if not text.startswith("```"):
         return text
     lines = text.splitlines()
-    if len(lines) < 2 or lines[-1].strip() != "```":
-        return text
-    return "\n".join(lines[1:-1]).strip()
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "```":
+            return "\n".join(lines[1:index]).strip()
+    return text
 
 
 def _infer_fenced_format(text: str) -> Literal["python", "yaml", "markdown", "text"]:
@@ -99,12 +101,18 @@ def _parse_plan(raw_text: str) -> PlanResult:
     cleaned = _TRAILING_COMMA_RE.sub(r"\1", _unwrap_outer_fence(raw_text))
     normalized_tasks = _normalize_plan_tasks(json.loads(cleaned, strict=False))
     valid_subtasks = []
-    for task in normalized_tasks:
+    dropped_subtasks = []
+    for index, task in enumerate(normalized_tasks):
         try:
             valid_subtasks.append(PlannedTask.model_validate(task))
-        except ValidationError:
+        except ValidationError as exc:
+            dropped_subtasks.append(f"subtask {index}: {exc}")
             continue
-    return PlanResult(subtasks=valid_subtasks, source_count=len(normalized_tasks))
+    return PlanResult(
+        subtasks=valid_subtasks,
+        source_count=len(normalized_tasks),
+        dropped_subtasks=dropped_subtasks,
+    )
 
 
 def parse_contract(
@@ -123,9 +131,9 @@ def parse_contract(
                 format=format_name,
             )
         if capability == "verify":
-            return VerificationResult.model_validate_json(raw_text)
+            return VerificationResult.model_validate(json.loads(_unwrap_outer_fence(raw_text), strict=False))
         if capability == "assess":
-            return AssessmentResult.model_validate_json(raw_text)
+            return AssessmentResult.model_validate(json.loads(_unwrap_outer_fence(raw_text), strict=False))
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         raise ContractParseError(f"{capability} contract validation failed: {exc}") from exc
     raise ContractParseError(f"{capability} has no output contract")

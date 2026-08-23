@@ -46,6 +46,20 @@ def test_trigger_improvement_includes_optional_candidate_evidence_inputs(monkeyp
     assert captured["data"]["inputs"]["evidence_class"] == "deterministic-validator"
 
 
+def test_planner_contract_failure_targets_planner_candidate():
+    inputs = run_tests.improvement_inputs_for_result({
+        "status": "PLANNER_FAILED",
+        "task_id": "task-1",
+        "evidence_class": "contract",
+    })
+
+    assert inputs == {
+        "target_role": "planner",
+        "source_attempt_id": "task-1",
+        "evidence_class": "contract",
+    }
+
+
 def test_candidate_comparison_runs_active_and_candidate_versions_sequentially(monkeypatch):
     test_case = {
         "label": "CODE_GENERATION",

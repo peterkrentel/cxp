@@ -87,6 +87,7 @@ class PlannerAgent(AgentShell):
                         inputs={
                             "target_role": "planner",
                             "source_attempt_id": packet.id,
+                            "evidence_class": "contract",
                         },
                     ),
                 )
@@ -102,6 +103,9 @@ class PlannerAgent(AgentShell):
                 validation_status="valid",
                 environment_healthy=True,
             )
+
+        for detail in plan.dropped_subtasks:
+            await self.record_validation_failure("malformed sub-task", detail)
 
         for task_model in plan.subtasks:
             task = task_model.model_dump()
@@ -158,4 +162,4 @@ class PlannerAgent(AgentShell):
             child.append_trace(self.agent_id, "created", "spawned by planner")
             await self.emit_packet(child)
 
-        return f"Spawned {plan.source_count} sub-packets for task {packet.task_id[:8]}"
+        return f"Spawned {len(plan.subtasks)} sub-packets for task {packet.task_id[:8]}"

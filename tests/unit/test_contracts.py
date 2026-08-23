@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.contracts import (
+    AssessmentResult,
     ArtifactResult,
     ContractParseError,
     PlanResult,
@@ -64,6 +65,13 @@ def test_artifact_contract_infers_format_from_outer_fence():
     assert result.content == "print('hello')"
 
 
+def test_artifact_contract_extracts_first_fence_before_trailing_prose():
+    result = parse_contract("code", "```yaml\nkind: ConfigMap\n```\nHere is the manifest.")
+
+    assert result.format == "yaml"
+    assert result.content == "kind: ConfigMap"
+
+
 def test_verification_contract_requires_score_in_unit_interval():
     valid = parse_contract("verify", """{
         "score": 0.8,
@@ -80,6 +88,29 @@ def test_verification_contract_requires_score_in_unit_interval():
             "issues": [],
             "suggestion": "none"
         }""")
+
+
+def test_structured_contracts_tolerate_fences_and_literal_control_characters():
+        verification = parse_contract("verify", """```json
+{
+    "score": 0.8,
+    "passed": true,
+    "issues": ["line one
+line two"],
+    "suggestion": "none"
+}
+```""")
+        assessment = parse_contract("assess", """```json
+{
+    "labels": ["CODE_GENERATION"],
+    "verdict": "ok",
+    "strengths": [],
+    "gaps": []
+}
+```""")
+
+        assert verification.score == 0.8
+        assert isinstance(assessment, AssessmentResult)
 
 
 def test_contract_models_reject_invalid_direct_construction():

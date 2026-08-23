@@ -218,6 +218,25 @@ def trigger_improvement(label: str, issues: list[str], inputs: dict | None = Non
     print(f"  ↑ Improvement task submitted: {resp.get('task_id', '?')}")
 
 
+def improvement_inputs_for_result(result: dict) -> dict | None:
+    task_id = result.get("task_id")
+    if not task_id:
+        return None
+    if result.get("status") == "PLANNER_FAILED" and result.get("evidence_class") == "contract":
+        return {
+            "target_role": "planner",
+            "source_attempt_id": task_id,
+            "evidence_class": "contract",
+        }
+    if result.get("evidence_class") == "deterministic-validator":
+        return {
+            "target_role": "executor",
+            "source_attempt_id": task_id,
+            "evidence_class": "deterministic-validator",
+        }
+    return None
+
+
 def _strip_markdown(text: str) -> str:
     """Remove ```lang ... ``` fences so validators see raw code."""
     import re
@@ -887,14 +906,7 @@ def main():
 
         if raw:
             print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
-            evidence_inputs = None
-            if r.get("evidence_class") == "deterministic-validator" and r.get("task_id"):
-                evidence_inputs = {
-                    "target_role": "executor",
-                    "source_attempt_id": r["task_id"],
-                    "evidence_class": "deterministic-validator",
-                }
-            trigger_improvement(r["label"], r["issues"], inputs=evidence_inputs)
+            trigger_improvement(r["label"], r["issues"], inputs=improvement_inputs_for_result(r))
             retry_id = submit_task(test["goal"])
             if retry_id:
                 print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")

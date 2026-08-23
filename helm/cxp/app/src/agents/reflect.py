@@ -59,7 +59,8 @@ class ReflectAgent(AgentShell):
             f"Failure report:\n{packet.payload.instructions}\n\n"
             f"Failed artifact context:\n{packet.payload.context[:800]}"
         )
-        improved = await self.llm(SYSTEM, prompt, packet_id=packet.id)
+        improved = await self.llm(SYSTEM, prompt, packet_id=packet.id,
+                                   task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
 
         candidate = SkillRevisionCandidate(
             target_role=target_role,

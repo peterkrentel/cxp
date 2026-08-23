@@ -48,7 +48,7 @@ class PlannerAgent(AgentShell):
         # up on the very next task, from every replica, without a pod restart
         skill = await self.get_skill("planner", fallback_path="/skills/planner_v1.md")
         raw = await self.llm(BASE_SYSTEM + skill, f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}",
-                              packet_id=packet.id)
+                              packet_id=packet.id, task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
 
         # Own span (not just llm.call, which already ended by the time
         # we're here) so a still-broken parse after the cleanup above

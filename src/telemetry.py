@@ -68,6 +68,8 @@ def record_llm_call(
     *,
     agent_id: str,
     packet_id: str | None,
+    task_id: str | None = None,
+    parent_packet_id: str | None = None,
     system: str,
     user: str,
     duration_seconds: float,
@@ -89,6 +91,14 @@ def record_llm_call(
     span.set_attribute("agent.id", agent_id)
     if packet_id:
         span.set_attribute("packet.id", packet_id)
+    # Without these two, a span can be looked up by its own packet.id but
+    # a Tempo/Grafana dashboard can't group by task lineage or reconstruct
+    # a parent-child chain -- confirmed live 2026-08-23 building the OTel
+    # dashboard: only packet.id was ever being stamped here.
+    if task_id:
+        span.set_attribute("task.id", task_id)
+    if parent_packet_id:
+        span.set_attribute("parent.packet.id", parent_packet_id)
     span.set_attribute("llm.system_prompt", system)
     span.set_attribute("llm.user_prompt", user)
     span.set_attribute("llm.duration_seconds", duration_seconds)

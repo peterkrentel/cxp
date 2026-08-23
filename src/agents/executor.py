@@ -35,7 +35,8 @@ class ExecutorAgent(AgentShell):
             f"Goal: {packet.payload.goal}\n\n"
             f"Context:\n{packet.payload.context}"
         )
-        raw_output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id)
+        raw_output = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id,
+                                     task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
         artifact = parse_contract("code", raw_output)
         output = artifact.content
         await self.record_attempt(

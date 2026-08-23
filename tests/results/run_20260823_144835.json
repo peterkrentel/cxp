@@ -1,0 +1,52 @@
+{
+  "timestamp": "20260823_144835",
+  "tier": 0,
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "TESTING",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "SKIPPED",
+      "reason": "swarm halted: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "SKIPPED",
+      "reason": "swarm halted before retry: reflect-1 failed on reflect (e2061e42): LLM call exceeded total budget of 900.0s"
+    }
+  ]
+}

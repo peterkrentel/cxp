@@ -1,0 +1,54 @@
+{
+  "timestamp": "20260823_205513",
+  "tier": 0,
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 1,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 845c0eb9: malformed JSON from model (plan contract validation failed: Expecting ',' delimiter: line 8 column 21 (char 298)). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 845c0eb9: malformed JSON from model (plan contract validation failed: Expecting ',' delimiter: line 8 column 21 (char 298)). No sub-tasks spawned.",
+      "task_id": "845c0eb9",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "TESTING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "TIMEOUT"
+    }
+  ]
+}

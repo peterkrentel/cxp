@@ -1,0 +1,16 @@
+{
+  "baseline_pass_rate": 0.0,
+  "candidate_id": "ecbd4978-14e8-4de5-87a6-ef431da142bd",
+  "candidate_pass_rate": 0.25,
+  "eligible": true,
+  "held_out_labels": [
+    "CODE_GENERATION",
+    "ERROR_HANDLING",
+    "STRUCTURED_OUTPUT",
+    "TESTING"
+  ],
+  "recommendation": "recommend_promotion",
+  "regressions": [],
+  "source_attempt_id": "348377ae",
+  "target_role": "executor"
+}

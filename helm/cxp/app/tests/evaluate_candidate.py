@@ -7,12 +7,14 @@ import asyncio
 import json
 import os
 import sys
+import time
+from pathlib import Path
 from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.agent_shell import KV_CANDIDATE_EVALUATIONS, KV_SKILL_CANDIDATES
-from src.candidate_evaluation import select_evaluable_candidate
+from src.candidate_evaluation import resolve_source_attempt, select_evaluable_candidate
 from src.memory import get_store
 from tests.run_tests import TIER_0_TESTS, run_candidate_comparison
 
@@ -52,6 +54,19 @@ def run_evaluation(
     return report
 
 
+def save_evaluation_report(
+    report: dict[str, Any],
+    *,
+    results_dir: Path,
+    timestamp: str | None = None,
+) -> Path:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = timestamp or time.strftime("%Y%m%d_%H%M%S")
+    path = results_dir / f"candidate_{report['candidate_id']}_{timestamp}.json"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True))
+    return path
+
+
 async def _read_json_bucket(kv) -> dict[str, dict[str, Any]]:
     entries = {}
     for key in await kv.keys():
@@ -72,7 +87,8 @@ async def _load_pending_candidate() -> tuple[str, dict[str, Any], dict[str, Any]
         if selected is None:
             return None
         candidate_id, candidate = selected
-        return candidate_id, candidate, attempts[candidate["source_attempt_id"]]
+        source_attempt = resolve_source_attempt(attempts, candidate["source_attempt_id"])
+        return candidate_id, candidate, source_attempt
     finally:
         await nc.drain()
 
@@ -100,6 +116,11 @@ def main() -> int:
         source_attempt=source_attempt,
         publish=lambda candidate_key, value: asyncio.run(_publish_report(candidate_key, value)),
     )
+    path = save_evaluation_report(
+        report,
+        results_dir=Path(__file__).resolve().parent / "results",
+    )
+    print(f"Candidate evaluation saved: {path}")
     print(f"Candidate {candidate_id}: {report['recommendation']}")
     return 0
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.candidate_evaluation import evaluate_candidate, select_evaluable_candidate
+from src.candidate_evaluation import evaluate_candidate, resolve_source_attempt, select_evaluable_candidate
 
 
 def _result(label: str, status: str) -> dict:
@@ -74,9 +74,9 @@ def test_candidate_recommends_promotion_for_held_out_improvement_without_regress
 def test_select_evaluable_candidate_skips_unhealthy_and_already_reported_candidates():
     candidate = select_evaluable_candidate(
         candidates={
-            "candidate-b": {"source_attempt_id": "attempt-b"},
+            "candidate-b": {"source_attempt_id": "attempt-b", "evidence_class": "deterministic-validator"},
             "candidate-a": {"source_attempt_id": "attempt-a", "target_role": "planner"},
-            "candidate-c": {"source_attempt_id": "attempt-c", "target_role": "executor"},
+            "candidate-c": {"source_attempt_id": "attempt-c", "target_role": "executor", "evidence_class": "deterministic-validator"},
         },
         attempts={
             "attempt-a": {"environment_healthy": False},
@@ -86,7 +86,7 @@ def test_select_evaluable_candidate_skips_unhealthy_and_already_reported_candida
         reports={"candidate-b": {"recommendation": "reject_regression"}},
     )
 
-    assert candidate == ("candidate-c", {"source_attempt_id": "attempt-c", "target_role": "executor"})
+    assert candidate == ("candidate-c", {"source_attempt_id": "attempt-c", "target_role": "executor", "evidence_class": "deterministic-validator"})
 
 
 def test_select_evaluable_candidate_returns_none_without_healthy_unevaluated_source():
@@ -103,3 +103,38 @@ def test_select_evaluable_candidate_skips_unsupported_roles():
         attempts={"attempt-a": {"environment_healthy": True}},
         reports={},
     ) is None
+
+
+def test_select_evaluable_candidate_resolves_a_healthy_attempt_by_task_id():
+    candidate = select_evaluable_candidate(
+        candidates={"candidate-a": {
+            "source_attempt_id": "task-1",
+            "target_role": "executor",
+            "evidence_class": "deterministic-validator",
+        }},
+        attempts={"attempt-1": {"task_id": "task-1", "environment_healthy": True}},
+        reports={},
+    )
+
+    assert candidate is not None
+
+
+def test_select_evaluable_candidate_skips_judgment_only_evidence():
+    assert select_evaluable_candidate(
+        candidates={"candidate-a": {
+            "source_attempt_id": "attempt-1",
+            "target_role": "executor",
+            "evidence_class": "judgment",
+        }},
+        attempts={"attempt-1": {"environment_healthy": True}},
+        reports={},
+    ) is None
+
+
+def test_resolve_source_attempt_supports_attempt_or_task_id():
+    attempts = {
+        "attempt-1": {"attempt_id": "attempt-1", "task_id": "task-1", "environment_healthy": True},
+    }
+
+    assert resolve_source_attempt(attempts, "attempt-1") == attempts["attempt-1"]
+    assert resolve_source_attempt(attempts, "task-1") == attempts["attempt-1"]

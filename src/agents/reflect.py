@@ -33,6 +33,9 @@ class ReflectAgent(AgentShell):
         if target_role not in LEARNABLE_SKILL_TARGETS:
             target_role = DEFAULT_SKILL_TARGET
         source_attempt_id = packet.payload.inputs.get("source_attempt_id") or packet.parent_packet_id or packet.id
+        evidence_class = packet.payload.inputs.get("evidence_class", "judgment")
+        if evidence_class not in {"contract", "deterministic-validator", "judgment"}:
+            evidence_class = "judgment"
         source_attempt = next(
             (attempt for attempt in reversed(self._memory.attempts)
              if attempt.get("attempt_id") == source_attempt_id),
@@ -61,6 +64,7 @@ class ReflectAgent(AgentShell):
             content=improved,
             source_attempt_id=source_attempt_id,
             rationale=packet.payload.instructions[:500],
+            evidence_class=evidence_class,
         )
         revision = await self.put_skill_candidate(packet.id, candidate.model_dump())
 

@@ -9,6 +9,17 @@ def _pass_rate(results: list[dict[str, Any]]) -> float:
     return sum(result.get("status") == "PASS" for result in results) / len(results)
 
 
+def resolve_source_attempt(
+    attempts: dict[str, dict[str, Any]],
+    source_attempt_id: str,
+) -> dict[str, Any] | None:
+    """Find source evidence by immutable attempt ID or the task that produced it."""
+    return attempts.get(source_attempt_id) or next(
+        (attempt for attempt in attempts.values() if attempt.get("task_id") == source_attempt_id),
+        None,
+    )
+
+
 def select_evaluable_candidate(
     *,
     candidates: dict[str, dict[str, Any]],
@@ -22,7 +33,9 @@ def select_evaluable_candidate(
         candidate = candidates[candidate_id]
         if candidate.get("target_role") != "executor":
             continue
-        source = attempts.get(candidate.get("source_attempt_id", ""))
+        if candidate.get("evidence_class") != "deterministic-validator":
+            continue
+        source = resolve_source_attempt(attempts, candidate.get("source_attempt_id", ""))
         if source and source.get("environment_healthy", True):
             return candidate_id, candidate
     return None

@@ -208,10 +208,13 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
     return results
 
 
-def trigger_improvement(label: str, issues: list[str]):
+def trigger_improvement(label: str, issues: list[str], inputs: dict | None = None):
     """Submit a reflect task directly — bypass planner to avoid hallucinated subtasks."""
     goal = f"Test '{label}' failed: {'; '.join(issues[:2])}. Review executor skill and fix."
-    resp = _http_post("/api/submit", {"goal": goal, "capability": "reflect"})
+    data = {"goal": goal, "capability": "reflect"}
+    if inputs is not None:
+        data["inputs"] = inputs
+    resp = _http_post("/api/submit", data)
     print(f"  ↑ Improvement task submitted: {resp.get('task_id', '?')}")
 
 
@@ -734,6 +737,8 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
             "issues": [f"Planner produced no sub-tasks: {reason}"],
             "reason": reason,
             "task_id": result.get("task_id"),
+            "validator_passed": False,
+            "evidence_class": "contract",
         }
     # `result.get("score") or 0` used to collapse "verifier genuinely scored
     # this 0.0" and "the score field was missing entirely" (e.g. an upstream
@@ -747,6 +752,8 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     missing_note = " (score field missing -- defaulted, not a genuine 0.0)" if score_was_missing else ""
     print(f"  [{label}] score={score:.2f}{missing_note}  {len(output)} chars")
     valid, issues = test["validator"](output)
+    validator_passed = valid
+    required_issue_keywords_failed = False
 
     if score_was_missing:
         issues = issues + ["No score returned by verifier (missing, not a genuine 0.0) -- likely an upstream parsing failure"]
@@ -755,6 +762,7 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         verify_issues_text = " ".join(result.get("verify_issues", [])).lower()
         if not any(kw in verify_issues_text for kw in test["required_issue_keywords"]):
             valid = False
+            required_issue_keywords_failed = True
             issues = issues + [f"Verifier didn't flag any of: {test['required_issue_keywords']}"]
 
     passed = valid and score >= test["threshold"]
@@ -766,6 +774,9 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
         "attempt": attempt,
         "issues": issues,
         "task_id": result.get("task_id"),
+        "validator_passed": validator_passed,
+        "evidence_class": "deterministic-validator" if not validator_passed else "judgment",
+        "required_issue_keywords_failed": required_issue_keywords_failed,
     }
 
 
@@ -876,7 +887,14 @@ def main():
 
         if raw:
             print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
-            trigger_improvement(r["label"], r["issues"])
+            evidence_inputs = None
+            if r.get("evidence_class") == "deterministic-validator" and r.get("task_id"):
+                evidence_inputs = {
+                    "target_role": "executor",
+                    "source_attempt_id": r["task_id"],
+                    "evidence_class": "deterministic-validator",
+                }
+            trigger_improvement(r["label"], r["issues"], inputs=evidence_inputs)
             retry_id = submit_task(test["goal"])
             if retry_id:
                 print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")

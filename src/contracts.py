@@ -57,6 +57,7 @@ class SkillRevisionCandidate(BaseModel):
     content: str
     source_attempt_id: str
     rationale: str
+    evidence_class: Literal["contract", "deterministic-validator", "judgment"] = "judgment"
 
 
 _TRAILING_COMMA_RE = re.compile(r",(\s*[\]}])")

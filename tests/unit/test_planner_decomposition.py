@@ -53,7 +53,8 @@ async def test_malformed_json_degrades_gracefully_instead_of_crashing(monkeypatc
     result = await p._execute(_goal_packet())
 
     assert "malformed JSON" in result
-    emitted.assert_not_called()
+    emitted.assert_awaited_once()
+    assert emitted.await_args.args[0].capability == "reflect"
 
 
 async def test_planner_delegates_decomposition_parsing_to_contract(monkeypatch):
@@ -92,6 +93,21 @@ async def test_planner_records_contract_failure_as_learnable_evidence(monkeypatc
     assert evidence["validation_status"] == "contract_error"
     assert evidence["environment_healthy"] is True
     assert evidence["raw_response"] == "not valid json"
+
+
+async def test_planner_contract_failure_requests_planner_targeted_candidate(monkeypatch):
+    p, emitted = await _planner(monkeypatch, "not valid json")
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+    packet = _goal_packet()
+
+    await p._execute(packet)
+
+    reflect_packet: CXPPacket = emitted.await_args.args[0]
+    assert reflect_packet.capability == "reflect"
+    assert reflect_packet.payload.inputs == {
+        "target_role": "planner",
+        "source_attempt_id": packet.id,
+    }
 
 
 async def test_planner_records_normalized_contract_evidence_on_success(monkeypatch):

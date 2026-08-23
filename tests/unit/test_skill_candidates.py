@@ -80,7 +80,30 @@ async def test_reflect_creates_candidate_without_overwriting_active_skill(monkey
     assert key == packet.id
     assert candidate["target_role"] == "planner"
     assert candidate["source_attempt_id"] == "attempt-1"
+    assert candidate["evidence_class"] == "judgment"
     assert "candidate" in result.lower()
+
+
+async def test_reflect_preserves_deterministic_evidence_class(monkeypatch):
+    agent = ReflectAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value="Current executor skill"))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="Return raw YAML only."))
+    put_candidate = AsyncMock(return_value=1)
+    monkeypatch.setattr(agent, "put_skill_candidate", put_candidate)
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    packet = CXPPacket(
+        type=PacketType.REFLECT,
+        capability="reflect",
+        payload=Payload(goal="Improve executor output", inputs={
+            "target_role": "executor",
+            "source_attempt_id": "task-1",
+            "evidence_class": "deterministic-validator",
+        }),
+    )
+
+    await agent._execute(packet)
+
+    assert put_candidate.await_args.args[1]["evidence_class"] == "deterministic-validator"
 
 
 async def test_reflect_rejects_platform_unhealthy_source_attempt(monkeypatch):

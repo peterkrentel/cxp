@@ -22,6 +22,30 @@ def test_submit_task_includes_optional_evaluation_inputs(monkeypatch):
     }
 
 
+def test_trigger_improvement_includes_optional_candidate_evidence_inputs(monkeypatch):
+    captured = {}
+
+    def fake_post(path, data):
+        captured["path"] = path
+        captured["data"] = data
+        return {"task_id": "reflect-1"}
+
+    monkeypatch.setattr(run_tests, "_http_post", fake_post)
+
+    run_tests.trigger_improvement(
+        "STRUCTURED_OUTPUT",
+        ["Invalid YAML"],
+        inputs={
+            "target_role": "executor",
+            "source_attempt_id": "task-1",
+            "evidence_class": "deterministic-validator",
+        },
+    )
+
+    assert captured["path"] == "/api/submit"
+    assert captured["data"]["inputs"]["evidence_class"] == "deterministic-validator"
+
+
 def test_candidate_comparison_runs_active_and_candidate_versions_sequentially(monkeypatch):
     test_case = {
         "label": "CODE_GENERATION",

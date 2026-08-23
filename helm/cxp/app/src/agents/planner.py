@@ -73,6 +73,24 @@ class PlannerAgent(AgentShell):
                     outcome="contract_error",
                     environment_healthy=True,
                 )
+                reflect = CXPPacket(
+                    origin=self.agent_id,
+                    type=PacketType.REFLECT,
+                    capability="reflect",
+                    priority=3,
+                    task_id=packet.task_id,
+                    parent_packet_id=packet.id,
+                    payload=Payload(
+                        goal="Self-improve: repair planner structured output",
+                        instructions=f"Plan contract error: {e}",
+                        context=raw,
+                        inputs={
+                            "target_role": "planner",
+                            "source_attempt_id": packet.id,
+                        },
+                    ),
+                )
+                await self.emit_packet(reflect)
                 await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
                 return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 

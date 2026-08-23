@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from tests.evaluate_candidate import run_evaluation
+import json
+
+from tests.evaluate_candidate import save_evaluation_report, run_evaluation
 
 
 def test_worker_compares_candidate_and_publishes_annotated_report():
@@ -27,3 +29,12 @@ def test_worker_compares_candidate_and_publishes_annotated_report():
     assert report["target_role"] == "executor"
     assert report["source_attempt_id"] == "attempt-1"
     assert published == [("candidate-1", report)]
+
+
+def test_worker_saves_report_to_results_history(tmp_path):
+    report = {"candidate_id": "candidate-1", "recommendation": "recommend_promotion"}
+
+    path = save_evaluation_report(report, results_dir=tmp_path, timestamp="20260823_120000")
+
+    assert path.name == "candidate_candidate-1_20260823_120000.json"
+    assert json.loads(path.read_text()) == report

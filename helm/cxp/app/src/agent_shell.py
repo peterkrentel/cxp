@@ -823,13 +823,14 @@ class AgentShell(ABC):
         await self._nc.publish(SUBJECT_THINKING,
             json.dumps({"agent": self.agent_id, "text": text}).encode())
 
-    async def llm(self, system: str, user: str, packet_id: str | None = None) -> str:
+    async def llm(self, system: str, user: str, packet_id: str | None = None,
+                   task_id: str | None = None, parent_packet_id: str | None = None) -> str:
         """Call Ollama with streaming. Auto-pull is disabled (see below) — a
         missing model raises RuntimeError rather than silently pulling.
 
-        packet_id is optional (some callers don't have one in scope) and
-        only used to tag the OTel span below for later lookup -- it has
-        no effect on the call itself."""
+        packet_id/task_id/parent_packet_id are optional (some callers don't
+        have one in scope) and only used to tag the OTel span below for
+        later lookup/grouping -- they have no effect on the call itself."""
         import httpx
 
         tracer = get_tracer(__name__)
@@ -921,6 +922,7 @@ class AgentShell(ABC):
                     try:
                         full = await asyncio.wait_for(_stream(client), timeout=LLM_TOTAL_TIMEOUT)
                         record_llm_call(span, agent_id=self.agent_id, packet_id=packet_id,
+                                         task_id=task_id, parent_packet_id=parent_packet_id,
                                          system=system, user=user, timed_out=False,
                                          response=full, duration_seconds=time.time() - call_start)
                         return full
@@ -933,6 +935,7 @@ class AgentShell(ABC):
                         # more time" apart from "stuck looping / garbage,"
                         # neither of which was distinguishable before this.
                         record_llm_call(span, agent_id=self.agent_id, packet_id=packet_id,
+                                         task_id=task_id, parent_packet_id=parent_packet_id,
                                          system=system, user=user, timed_out=True,
                                          response="".join(chunks), duration_seconds=time.time() - call_start)
                         raise TimeoutError(f"LLM call exceeded total budget of {LLM_TOTAL_TIMEOUT}s")

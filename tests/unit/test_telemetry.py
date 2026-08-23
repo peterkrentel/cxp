@@ -76,3 +76,32 @@ def test_record_llm_call_omits_packet_id_attribute_when_not_provided():
 
     attrs = exporter.get_finished_spans()[0].attributes
     assert "packet.id" not in attrs
+
+
+def test_record_llm_call_stamps_task_id_and_parent_packet_id():
+    """Without these, a Tempo/Grafana dashboard can group spans by
+    individual packet but can't reconstruct a whole task's plan->code->
+    verify->reflect timeline or its parent-child lineage -- confirmed
+    live 2026-08-23 while building the OTel dashboard."""
+    tracer, exporter = _tracer()
+    with tracer.start_as_current_span("llm.call") as span:
+        record_llm_call(span, agent_id="executor-1", packet_id="abc123",
+                         task_id="task-1", parent_packet_id="parent-1",
+                         system="SYS", user="USER", duration_seconds=1.0,
+                         timed_out=False, response="ok")
+
+    attrs = exporter.get_finished_spans()[0].attributes
+    assert attrs["task.id"] == "task-1"
+    assert attrs["parent.packet.id"] == "parent-1"
+
+
+def test_record_llm_call_omits_task_id_and_parent_packet_id_when_not_provided():
+    tracer, exporter = _tracer()
+    with tracer.start_as_current_span("llm.call") as span:
+        record_llm_call(span, agent_id="executor-1", packet_id="abc123",
+                         system="SYS", user="USER", duration_seconds=1.0,
+                         timed_out=False, response="ok")
+
+    attrs = exporter.get_finished_spans()[0].attributes
+    assert "task.id" not in attrs
+    assert "parent.packet.id" not in attrs

@@ -116,3 +116,21 @@ line two"],
 def test_contract_models_reject_invalid_direct_construction():
     with pytest.raises(ValidationError):
         VerificationResult(score=-0.1, passed=False, issues=[], suggestion="fix it")
+
+
+def test_verification_contract_tolerates_missing_optional_fields():
+    result = parse_contract("verify", '{"score": 0.9}')
+
+    assert result.score == 0.9
+    assert result.passed is False
+    assert result.issues == []
+    assert result.suggestion == ""
+
+
+def test_assessment_contract_tolerates_missing_optional_fields():
+    result = parse_contract("assess", '{"labels": ["CODE_GENERATION"]}')
+
+    assert result.labels == ["CODE_GENERATION"]
+    assert result.verdict == ""
+    assert result.strengths == []
+    assert result.gaps == []

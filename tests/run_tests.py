@@ -97,11 +97,13 @@ def run_candidate_comparison(
     baseline_results = []
     candidate_results = []
     for test in held_out_tests:
-        active_id = submit_task(test["goal"])
+        active_id = submit_task(test["goal"], inputs={"evaluation_run": True})
         active_raw = wait_for_results({active_id: test}, timeout=test["timeout"]) if active_id else {}
         baseline_results.append(evaluate(test, active_raw.get(active_id)))
 
-        candidate_id_for_task = submit_task(test["goal"], inputs={"candidate_id": candidate_id})
+        candidate_id_for_task = submit_task(
+            test["goal"], inputs={"candidate_id": candidate_id, "evaluation_run": True}
+        )
         candidate_raw = (
             wait_for_results({candidate_id_for_task: test}, timeout=test["timeout"])
             if candidate_id_for_task else {}

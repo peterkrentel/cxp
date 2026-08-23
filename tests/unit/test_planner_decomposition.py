@@ -145,6 +145,26 @@ async def test_planner_propagates_candidate_evaluation_inputs_to_child(monkeypat
     assert child.payload.inputs == {"candidate_id": "candidate-1"}
 
 
+async def test_planner_requests_planner_candidate_when_every_subtask_is_invalid(monkeypatch):
+    sub_tasks = [
+        {"type": "code", "capability": "code", "priority": "not-a-number", "goal": "a", "instructions": "x"},
+        {"type": "code", "capability": "code", "priority": "also-bad", "goal": "b", "instructions": "y"},
+    ]
+    p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+
+    result = await p._execute(_goal_packet())
+
+    # A silent zero-subtask outcome after a structurally valid parse is the
+    # same missed-learning-signal shape as a hard contract error -- it must
+    # still request planner-targeted feedback, not just log locally.
+    emitted.assert_awaited_once()
+    reflect_packet: CXPPacket = emitted.await_args.args[0]
+    assert reflect_packet.capability == "reflect"
+    assert reflect_packet.payload.inputs["target_role"] == "planner"
+    assert "Spawned 0 sub-packets" in result
+
+
 async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):
     sub_tasks = [{"type": "code", "goal": "write a function", "instructions": "do it"}]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))

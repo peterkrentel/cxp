@@ -107,6 +107,33 @@ class PlannerAgent(AgentShell):
         for detail in plan.dropped_subtasks:
             await self.record_validation_failure("malformed sub-task", detail)
 
+        if not plan.subtasks and plan.source_count > 0:
+            # A structurally valid parse where every subtask still failed
+            # PlannedTask validation is the same missed-learning-signal shape
+            # as a hard contract error -- only the JSONDecodeError branch
+            # above used to request planner feedback, so this case silently
+            # produced zero self-improvement signal.
+            detail = f"All {plan.source_count} sub-task(s) failed validation: {'; '.join(plan.dropped_subtasks)}"
+            reflect = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="reflect",
+                priority=3,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal="Self-improve: repair planner structured output",
+                    instructions=f"Plan contract error: {detail}",
+                    context=raw,
+                    inputs={
+                        "target_role": "planner",
+                        "source_attempt_id": packet.id,
+                        "evidence_class": "contract",
+                    },
+                ),
+            )
+            await self.emit_packet(reflect)
+
         for task_model in plan.subtasks:
             task = task_model.model_dump()
             raw_type = task.get("type", "code")

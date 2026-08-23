@@ -88,8 +88,38 @@ def test_candidate_comparison_runs_active_and_candidate_versions_sequentially(mo
     )
 
     assert submitted == [
-        ("write a function", None),
-        ("write a function", {"candidate_id": "candidate-1"}),
+        ("write a function", {"evaluation_run": True}),
+        ("write a function", {"candidate_id": "candidate-1", "evaluation_run": True}),
     ]
     assert report["recommendation"] == "recommend_promotion"
     assert report["candidate_id"] == "candidate-1"
+
+
+def test_candidate_comparison_marks_both_submissions_as_evaluation_runs(monkeypatch):
+    test_case = {
+        "label": "CODE_GENERATION",
+        "goal": "write a function",
+        "validator": lambda _output: (True, []),
+        "threshold": 0.5,
+        "timeout": 10,
+    }
+    submitted_inputs = []
+
+    def fake_submit(goal, inputs=None):
+        submitted_inputs.append(inputs)
+        return "task-id"
+
+    monkeypatch.setattr(run_tests, "submit_task", fake_submit)
+    monkeypatch.setattr(run_tests, "wait_for_results", lambda *_args, **_kwargs: {})
+
+    run_tests.run_candidate_comparison(
+        candidate_id="candidate-1",
+        source_attempt={"environment_healthy": True},
+        held_out_tests=[test_case],
+    )
+
+    # Both the baseline and candidate submissions run through the exact same
+    # live pipeline as a real task -- without this flag, verifier has no way
+    # to tell a deliberate candidate comparison apart from real production
+    # traffic before writing to episodic memory.
+    assert all(inputs is not None and inputs.get("evaluation_run") is True for inputs in submitted_inputs)

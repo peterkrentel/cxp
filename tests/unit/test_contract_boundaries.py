@@ -172,6 +172,66 @@ async def test_executor_normalizes_artifact_before_verification(monkeypatch):
     assert evidence["skill_revision"] == 7
 
 
+async def test_verifier_defaults_score_to_neutral_when_missing_from_a_valid_response(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value='{"passed": true}'))
+    monkeypatch.setattr(agent, "emit_packet", AsyncMock())
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(passed=True, issues=[], suggestion=""),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact"),
+    )
+
+    await agent._execute(packet)
+
+    # A genuinely absent score must land on the neutral 0.5 fallback, not a
+    # hard 0.0 fail -- a valid response missing one optional field is not
+    # the same signal as a response that failed to parse at all.
+    assert packet.quality_score == 0.5
+
+
+async def test_verifier_skips_episodic_write_during_a_candidate_evaluation_run(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    monkeypatch.setattr(agent, "emit_packet", AsyncMock())
+    monkeypatch.setattr(agent, "record_attempt", AsyncMock())
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    add_episodic = AsyncMock()
+    monkeypatch.setattr(agent._memory, "add_episodic", add_episodic)
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(score=0.9, passed=True, issues=[], suggestion=""),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact", inputs={"evaluation_run": True}),
+    )
+
+    await agent._execute(packet)
+
+    # A candidate-comparison run must never write into the same episodic
+    # history the regression detector reads -- a deliberately bad candidate
+    # would otherwise corrupt the next real regression check.
+    add_episodic.assert_not_called()
+
+
 async def test_failed_verification_targets_executor_candidate(monkeypatch):
     from src.agents import verifier as verifier_module
     from src.agents.verifier import VerifierAgent

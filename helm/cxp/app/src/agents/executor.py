@@ -62,7 +62,7 @@ class ExecutorAgent(AgentShell):
                 goal=f"Verify: {packet.payload.goal}",
                 instructions="Check correctness, completeness, and safety of the artifact below.",
                 context=output,
-                inputs={"skill_revision": skill_revision, "capability": "code"},
+                inputs={**packet.payload.inputs, "skill_revision": skill_revision, "capability": "code"},
             ),
             routing_hints=RoutingHints(next_type=PacketType.REFLECT),
         )

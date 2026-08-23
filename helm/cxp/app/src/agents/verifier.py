@@ -64,16 +64,20 @@ class VerifierAgent(AgentShell):
 
         packet.quality_score = float(result.get("score") if result.get("score") is not None else 0.5)
 
-        # Record which skill revision produced this artifact and how it
-        # scored — the only way to actually measure whether reflect's
-        # rewrites are improving output over time, instead of assuming so.
-        self._memory.add_episodic({
-            "capability": packet.payload.inputs.get("capability", "code"),
-            "skill_revision": packet.payload.inputs.get("skill_revision"),
-            "score": packet.quality_score,
-            "goal": packet.payload.goal,
-        })
-        await self._memory.save()
+        # A candidate-comparison run submits the exact same live pipeline
+        # traffic as a real task -- writing it into episodic memory would let
+        # a deliberately bad candidate corrupt the next real regression check.
+        if not packet.payload.inputs.get("evaluation_run"):
+            # Record which skill revision produced this artifact and how it
+            # scored — the only way to actually measure whether reflect's
+            # rewrites are improving output over time, instead of assuming so.
+            self._memory.add_episodic({
+                "capability": packet.payload.inputs.get("capability", "code"),
+                "skill_revision": packet.payload.inputs.get("skill_revision"),
+                "score": packet.quality_score,
+                "goal": packet.payload.goal,
+            })
+            await self._memory.save()
 
         if not result.get("passed", False):
             # spawn a reflect packet so the system can learn

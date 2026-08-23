@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from .agent_shell import _strip_trailing_commas, strip_code_fence
 
 
 class ContractParseError(ValueError):
@@ -40,17 +41,17 @@ class ArtifactResult(BaseModel):
 
 
 class VerificationResult(BaseModel):
-    score: float = Field(ge=0, le=1)
-    passed: bool
-    issues: list[str]
-    suggestion: str
+    score: float | None = Field(default=None, ge=0, le=1)
+    passed: bool = False
+    issues: list[str] = Field(default_factory=list)
+    suggestion: str = ""
 
 
 class AssessmentResult(BaseModel):
-    labels: list[str]
-    verdict: str
-    strengths: list[str]
-    gaps: list[str]
+    labels: list[str] = Field(default_factory=list)
+    verdict: str = ""
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
 
 
 class SkillRevisionCandidate(BaseModel):
@@ -59,20 +60,6 @@ class SkillRevisionCandidate(BaseModel):
     source_attempt_id: str
     rationale: str
     evidence_class: Literal["contract", "deterministic-validator", "judgment"] = "judgment"
-
-
-_TRAILING_COMMA_RE = re.compile(r",(\s*[\]}])")
-
-
-def _unwrap_outer_fence(text: str) -> str:
-    text = text.strip()
-    if not text.startswith("```"):
-        return text
-    lines = text.splitlines()
-    for index, line in enumerate(lines[1:], start=1):
-        if line.strip() == "```":
-            return "\n".join(lines[1:index]).strip()
-    return text
 
 
 def _infer_fenced_format(text: str) -> Literal["python", "yaml", "markdown", "text"]:
@@ -98,7 +85,7 @@ def _normalize_plan_tasks(tasks: object) -> list[dict]:
 
 
 def _parse_plan(raw_text: str) -> PlanResult:
-    cleaned = _TRAILING_COMMA_RE.sub(r"\1", _unwrap_outer_fence(raw_text))
+    cleaned = _strip_trailing_commas(strip_code_fence(raw_text))
     normalized_tasks = _normalize_plan_tasks(json.loads(cleaned, strict=False))
     valid_subtasks = []
     dropped_subtasks = []
@@ -127,13 +114,13 @@ def parse_contract(
         if capability == "code":
             format_name = expected_format or _infer_fenced_format(raw_text)
             return ArtifactResult(
-                content=_unwrap_outer_fence(raw_text),
+                content=strip_code_fence(raw_text),
                 format=format_name,
             )
         if capability == "verify":
-            return VerificationResult.model_validate(json.loads(_unwrap_outer_fence(raw_text), strict=False))
+            return VerificationResult.model_validate(json.loads(strip_code_fence(raw_text), strict=False))
         if capability == "assess":
-            return AssessmentResult.model_validate(json.loads(_unwrap_outer_fence(raw_text), strict=False))
+            return AssessmentResult.model_validate(json.loads(strip_code_fence(raw_text), strict=False))
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         raise ContractParseError(f"{capability} contract validation failed: {exc}") from exc
     raise ContractParseError(f"{capability} has no output contract")

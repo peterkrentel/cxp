@@ -9,6 +9,8 @@ import sys
 import time
 import urllib.request
 
+from src.candidate_evaluation import evaluate_candidate
+
 # The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
 # which puts only this script's OWN directory on sys.path, not its parent -- so
 # select_active_tier()'s `from tests.check_plateau import ...` would fail to
@@ -60,8 +62,11 @@ def wait_for_ready(timeout=300):
     return False
 
 
-def submit_task(goal: str) -> str | None:
-    resp = _http_post("/api/submit", {"goal": goal})
+def submit_task(goal: str, inputs: dict | None = None) -> str | None:
+    data = {"goal": goal}
+    if inputs is not None:
+        data["inputs"] = inputs
+    resp = _http_post("/api/submit", data)
     return resp.get("task_id")
 
 
@@ -75,6 +80,40 @@ def check_halted() -> dict | None:
     getting rejected with 409, which previously got reported as plain FAIL
     (looks like a capability regression) instead of "never got to run"."""
     return get_state().get("halt")
+
+
+def run_candidate_comparison(
+    *,
+    candidate_id: str,
+    source_attempt: dict,
+    held_out_tests: list[dict],
+) -> dict:
+    """Run held-out tasks sequentially against active and staged skills.
+
+    This deliberately returns a recommendation only. The caller remains
+    responsible for publishing the report and a human remains responsible for
+    promotion.
+    """
+    baseline_results = []
+    candidate_results = []
+    for test in held_out_tests:
+        active_id = submit_task(test["goal"])
+        active_raw = wait_for_results({active_id: test}, timeout=test["timeout"]) if active_id else {}
+        baseline_results.append(evaluate(test, active_raw.get(active_id)))
+
+        candidate_id_for_task = submit_task(test["goal"], inputs={"candidate_id": candidate_id})
+        candidate_raw = (
+            wait_for_results({candidate_id_for_task: test}, timeout=test["timeout"])
+            if candidate_id_for_task else {}
+        )
+        candidate_results.append(evaluate(test, candidate_raw.get(candidate_id_for_task)))
+
+    return evaluate_candidate(
+        candidate_id=candidate_id,
+        source_attempt=source_attempt,
+        baseline_results=baseline_results,
+        candidate_results=candidate_results,
+    )
 
 
 def wait_for_results(task_ids: dict, timeout=480) -> dict:

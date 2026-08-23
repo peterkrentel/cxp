@@ -9,16 +9,16 @@ import sys
 import time
 import urllib.request
 
-from src.candidate_evaluation import build_self_improvement_inputs, evaluate_candidate
-
 # The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
 # which puts only this script's OWN directory on sys.path, not its parent -- so
-# select_active_tier()'s `from tests.check_plateau import ...` would fail to
-# resolve `tests` as a package. Confirmed live: found while packaging
-# check_plateau.py itself into the deployed app for the same reason. Fixing at
-# the source rather than assuming the caller's invocation style, so this works
-# regardless (same fix already applied in check_plateau.py).
+# any `from src...`/`from tests...` import below would fail to resolve those as
+# packages. Must run before any such import, not after -- confirmed live
+# 2026-08-23: this fix previously sat below the `from src.candidate_evaluation`
+# import, so it never ran in time to help that exact import, and the CronJob's
+# first real run crashed immediately with ModuleNotFoundError.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.candidate_evaluation import build_self_improvement_inputs, evaluate_candidate
 
 API = os.environ.get("CXP_WEB_API", "http://cxp-web:8080")
 MEMORY_PATH = os.environ.get("CXP_MEMORY_PATH", "/data/memory.json")  # same PVC agents write to

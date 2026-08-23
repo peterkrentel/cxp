@@ -4,7 +4,25 @@ from __future__ import annotations
 
 import json
 
-from tests.evaluate_candidate import save_evaluation_report, run_evaluation
+from tests.evaluate_candidate import save_evaluation_report, run_evaluation, _read_json_bucket
+
+
+async def test_read_json_bucket_returns_empty_on_a_bucket_with_zero_keys():
+    from nats.js.errors import NoKeysError
+
+    # get_or_create_kv only fixes a missing *bucket* -- a bucket that exists
+    # but has never had anything staged in it yet (the real state of a fresh
+    # cluster's cxp-skill-candidates bucket, confirmed live 2026-08-23) makes
+    # kv.keys() raise NoKeysError rather than return [], crashing this
+    # CronJob every hour exactly like the bucket-missing case this was
+    # supposed to already be fixed against.
+    class EmptyKV:
+        async def keys(self):
+            raise NoKeysError()
+
+    entries = await _read_json_bucket(EmptyKV())
+
+    assert entries == {}
 
 
 def test_worker_compares_candidate_and_publishes_annotated_report():

@@ -68,8 +68,18 @@ def save_evaluation_report(
 
 
 async def _read_json_bucket(kv) -> dict[str, dict[str, Any]]:
+    from nats.js.errors import NoKeysError
+
     entries = {}
-    for key in await kv.keys():
+    try:
+        keys = await kv.keys()
+    except NoKeysError:
+        # A bucket that exists but has never had anything staged in it yet
+        # (a fresh cluster's cxp-skill-candidates bucket before reflect's
+        # first candidate) raises this from kv.keys() instead of returning
+        # [] -- get_or_create_kv only covers the bucket-missing case.
+        return entries
+    for key in keys:
         entries[key] = json.loads((await kv.get(key)).value.decode())
     return entries
 

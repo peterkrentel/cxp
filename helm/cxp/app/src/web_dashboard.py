@@ -218,6 +218,25 @@ async def startup():
     log.info("Startup event completed (subscribe_nats running in background)")
 
 
+def build_submission_packet(body: dict) -> CXPPacket:
+    goal = body.get("goal", "").strip()
+    inputs = body.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise ValueError("inputs must be an object")
+    capability = body.get("capability", "plan")
+    type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
+                "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
+                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
+    return CXPPacket(
+        origin="web-ui",
+        type=type_map.get(capability, PacketType.PLAN),
+        capability=capability,
+        priority=5,
+        task_id=uuid.uuid4().hex[:8],
+        payload=Payload(goal=goal, instructions=goal, context="", inputs=inputs),
+    )
+
+
 @app.post("/api/submit")
 async def submit_task(request: Request):
     halt = await get_halt()
@@ -228,26 +247,14 @@ async def submit_task(request: Request):
         }, status_code=409)
 
     body = await request.json()
-    goal = body.get("goal", "").strip()
-    if not goal:
+    try:
+        packet = build_submission_packet(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not packet.payload.goal:
         return JSONResponse({"error": "goal required"}, status_code=400)
-    # allow callers (e.g. test runner) to target a specific capability directly
-    capability = body.get("capability", "plan")
-    # Map capability to packet type. assess/deploy/etc route by capability name in NATS, not by type
-    type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
-                "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
-                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
-    ptype = type_map.get(capability, PacketType.PLAN)
-    packet = CXPPacket(
-        origin="web-ui",
-        type=ptype,
-        capability=capability,
-        priority=5,
-        task_id=uuid.uuid4().hex[:8],
-        payload=Payload(goal=goal, instructions=goal, context=""),
-    )
     if _nc:
-        await _nc.jetstream().publish(f"cxp.cap.{capability}", packet.model_dump_json().encode())
+        await _nc.jetstream().publish(f"cxp.cap.{packet.capability}", packet.model_dump_json().encode())
     return JSONResponse({"task_id": packet.task_id, "packet_id": packet.id[:8]})
 
 

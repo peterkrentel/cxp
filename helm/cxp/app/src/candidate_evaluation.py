@@ -5,6 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 
+def build_self_improvement_inputs(
+    *, target_role: str, source_attempt_id: str, evidence_class: str,
+) -> dict[str, Any]:
+    """The one shape every reflect-triggering packet's inputs must carry.
+
+    Previously reconstructed independently in three places (planner.py's
+    own reflect emissions, verifier.py's reflect-on-fail emission, and
+    run_tests.py's improvement_inputs_for_result()) -- one of them
+    (verifier's) silently omitted evidence_class, relying on reflect.py's
+    own ("judgment") default instead of being explicit about it.
+    """
+    return {
+        "target_role": target_role,
+        "source_attempt_id": source_attempt_id,
+        "evidence_class": evidence_class,
+    }
+
+
 def _pass_rate(results: list[dict[str, Any]]) -> float:
     return sum(result.get("status") == "PASS" for result in results) / len(results)
 

@@ -7,6 +7,7 @@ import logging
 
 from ..agent_shell import AgentShell
 from ..contracts import parse_contract
+from ..candidate_evaluation import build_self_improvement_inputs
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class VerifierAgent(AgentShell):
             validation_issues=validation_issues,
             environment_healthy=True,
             skill_revision=packet.payload.inputs.get("skill_revision"),
+            persist=False,
         )
 
         packet.quality_score = float(result.get("score") if result.get("score") is not None else 0.5)
@@ -86,7 +88,12 @@ class VerifierAgent(AgentShell):
                 "score": packet.quality_score,
                 "goal": packet.payload.goal,
             })
-            await self._memory.save()
+
+        # One save covers both the attempt record above and the episodic
+        # entry just queued -- previously two separate memory.json rewrites
+        # per verify packet (record_attempt's own internal save, plus this
+        # one), on top of a third from _handle_message's own save afterward.
+        await self._memory.save()
 
         if not is_candidate_traffic and not result.get("passed", False):
             # spawn a reflect packet so the system can learn
@@ -105,10 +112,9 @@ class VerifierAgent(AgentShell):
                         "Propose a one-paragraph update to the executor skill file to prevent this."
                     ),
                     context=packet.payload.context,
-                    inputs={
-                        "target_role": "executor",
-                        "source_attempt_id": packet.id,
-                    },
+                    inputs=build_self_improvement_inputs(
+                        target_role="executor", source_attempt_id=packet.id, evidence_class="judgment",
+                    ),
                 ),
             )
             reflect.append_trace(self.agent_id, "created", "spawned due to failed verification")

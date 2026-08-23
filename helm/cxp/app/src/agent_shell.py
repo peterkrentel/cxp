@@ -70,6 +70,18 @@ INFLIGHT_STALE_SECONDS = 960
 # bucket doesn't grow forever across the swarm's lifetime.
 DONE_CLAIM_RETENTION_SECONDS = 7200
 
+# Exception class names / message substrings that indicate transient
+# network/LLM slowness rather than a genuine code or logic defect --
+# matched against an exception's repr()/str() to decide environment_healthy
+# below, and reused by diagnostician.py to decide how to diagnose a halt.
+# "exceeded total budget" matches AgentShell.llm()'s own raised message
+# verbatim -- str(TimeoutError("some message")) returns just the message
+# text, NOT prefixed with the class name, so the class-name substrings
+# alone never actually matched this specific exception (found live
+# 2026-08-17, see diagnostician.py's history for the incident this caused).
+TRANSIENT_EXCEPTIONS = ("ReadTimeout", "ConnectTimeout", "ConnectError", "PoolTimeout",
+                        "TimeoutError", "exceeded total budget")
+
 # Work-item packets (cxp.cap.*) get a durable JetStream stream so a packet
 # published while no replica happens to be subscribed (mid-rollout, pod
 # restart) isn't silently lost — it's redelivered once a consumer is back.
@@ -263,11 +275,6 @@ class AgentShell(ABC):
         except Exception:
             return None
 
-    async def put_candidate_evaluation(self, key: str, report: dict) -> int:
-        """Store a promotion recommendation without applying a candidate."""
-        kv = await self._kv(KV_CANDIDATE_EVALUATIONS)
-        return await kv.put(key, json.dumps(report).encode())
-
     async def is_halted(self) -> dict | None:
         """Return the halt record if the swarm is currently paused, else None."""
         try:
@@ -317,8 +324,14 @@ class AgentShell(ABC):
         outcome: str = "completed",
         environment_healthy: bool = True,
         skill_revision: int | str | None = None,
+        persist: bool = True,
     ) -> None:
-        """Persist LLM output evidence independently of optional OTel export."""
+        """Persist LLM output evidence independently of optional OTel export.
+
+        persist=False lets a caller that's about to make its own further
+        in-memory writes this same packet (e.g. verifier's episodic-memory
+        entry) batch everything into one save() instead of two.
+        """
         prompt = "\n".join((packet.payload.goal, packet.payload.instructions, packet.payload.context))
         self._memory.add_attempt({
             "attempt_id": packet.id,
@@ -336,7 +349,8 @@ class AgentShell(ABC):
             "outcome": outcome,
             "environment_healthy": environment_healthy,
         })
-        await self._memory.save()
+        if persist:
+            await self._memory.save()
 
     @staticmethod
     def _ollama_slot_key(url: str) -> str:
@@ -620,7 +634,17 @@ class AgentShell(ABC):
             # timeout errors) — fall back to repr() so the halt reason
             # and logs always name at least the exception class.
             detail = str(exc) or repr(exc)
-            outcome = "timeout" if isinstance(exc, TimeoutError) else "agent_error"
+            # Classify by message/class-name match (TRANSIENT_EXCEPTIONS),
+            # not just isinstance(exc, TimeoutError) -- httpx's own timeout
+            # classes (ReadTimeout, ConnectTimeout, ...) aren't TimeoutError
+            # subclasses. A genuine agent bug (anything NOT matching) must be
+            # recorded as environment_healthy=True: that flag feeds directly
+            # into select_evaluable_candidate()'s and reflect's health gate,
+            # and unconditionally marking every failure "unhealthy" would
+            # permanently hide real recurring bugs from ever being treated
+            # as genuine learning evidence.
+            is_transient = any(name == type(exc).__name__ or name in detail for name in TRANSIENT_EXCEPTIONS)
+            outcome = "timeout" if is_transient else "agent_error"
             try:
                 await self.record_attempt(
                     packet=packet,
@@ -629,7 +653,7 @@ class AgentShell(ABC):
                     validation_status="platform_error",
                     validation_issues=[detail],
                     outcome=outcome,
-                    environment_healthy=False,
+                    environment_healthy=not is_transient,
                 )
             except Exception as record_exc:
                 log.error("[%s] could not record failed attempt: %r", self.agent_id, record_exc)

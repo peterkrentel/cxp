@@ -118,6 +118,13 @@ spec:
             {{- if eq $cfg.role "diagnostician" }}
             - { name: OLLAMA_SMALL_URL, value: "{{ $.Values.ollamaSmallUrl }}" }
             {{- end }}
+            {{- if eq $cfg.role "web" }}
+            - name: CXP_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cxp-internal-token
+                  key: token
+            {{- end }}
             {{- if or (eq $cfg.role "deployer") (eq $cfg.role "diagnostician") }}
             - { name: PATH,           value: "/shared-bin:/usr/local/bin:/usr/bin:/bin" }
             {{- end }}

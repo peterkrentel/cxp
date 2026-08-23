@@ -8,6 +8,7 @@ import logging
 from opentelemetry.trace import Status, StatusCode
 
 from ..agent_shell import AgentShell
+from ..candidate_evaluation import build_self_improvement_inputs
 from ..contracts import ContractParseError, parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 from ..telemetry import get_tracer
@@ -84,11 +85,9 @@ class PlannerAgent(AgentShell):
                         goal="Self-improve: repair planner structured output",
                         instructions=f"Plan contract error: {e}",
                         context=raw,
-                        inputs={
-                            "target_role": "planner",
-                            "source_attempt_id": packet.id,
-                            "evidence_class": "contract",
-                        },
+                        inputs=build_self_improvement_inputs(
+                            target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
+                        ),
                     ),
                 )
                 await self.emit_packet(reflect)
@@ -125,11 +124,9 @@ class PlannerAgent(AgentShell):
                     goal="Self-improve: repair planner structured output",
                     instructions=f"Plan contract error: {detail}",
                     context=raw,
-                    inputs={
-                        "target_role": "planner",
-                        "source_attempt_id": packet.id,
-                        "evidence_class": "contract",
-                    },
+                    inputs=build_self_improvement_inputs(
+                        target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
+                    ),
                 ),
             )
             await self.emit_packet(reflect)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -274,6 +275,28 @@ async def startup():
     log.info("Startup event completed (subscribe_nats running in background)")
 
 
+# Fields that only the trusted in-cluster test-runner CronJob may set --
+# candidate_id lets a caller run any staged (unvetted) skill candidate
+# against a real task, and evaluation_run hides a real production score
+# from the episodic-memory regression baseline. /api/submit has no other
+# authentication, so both are stripped from any caller that can't present
+# the shared token below.
+INTERNAL_ONLY_INPUT_KEYS = {"candidate_id", "evaluation_run"}
+
+
+def _has_valid_internal_token(header_value: str | None) -> bool:
+    expected = os.environ.get("CXP_INTERNAL_TOKEN")
+    if not expected or not header_value:
+        return False
+    return hmac.compare_digest(header_value, expected)
+
+
+def sanitize_untrusted_inputs(inputs: dict, internal_token_header: str | None) -> dict:
+    if _has_valid_internal_token(internal_token_header):
+        return inputs
+    return {k: v for k, v in inputs.items() if k not in INTERNAL_ONLY_INPUT_KEYS}
+
+
 def build_submission_packet(body: dict) -> CXPPacket:
     goal = body.get("goal", "").strip()
     inputs = body.get("inputs", {})
@@ -303,6 +326,10 @@ async def submit_task(request: Request):
         }, status_code=409)
 
     body = await request.json()
+    if isinstance(body.get("inputs"), dict):
+        body["inputs"] = sanitize_untrusted_inputs(
+            body["inputs"], request.headers.get("x-cxp-internal-token")
+        )
     try:
         packet = build_submission_packet(body)
     except ValueError as exc:

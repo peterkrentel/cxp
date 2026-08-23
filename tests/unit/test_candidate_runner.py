@@ -2,7 +2,62 @@
 
 from __future__ import annotations
 
+import urllib.request
+
 from tests import run_tests
+
+
+def test_http_post_attaches_the_internal_token_header_when_configured(monkeypatch):
+    monkeypatch.setenv("CXP_INTERNAL_TOKEN", "secret-token")
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(req, timeout=10):
+        captured["token"] = req.get_header("X-cxp-internal-token")
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    # The web dashboard strips candidate_id/evaluation_run from any caller
+    # that doesn't present this header -- run_candidate_comparison()'s own
+    # submissions must carry it or they'd silently lose their own inputs.
+    run_tests._http_post("/api/submit", {"goal": "x"})
+
+    assert captured["token"] == "secret-token"
+
+
+def test_http_post_omits_the_header_when_no_token_is_configured(monkeypatch):
+    monkeypatch.delenv("CXP_INTERNAL_TOKEN", raising=False)
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(req, timeout=10):
+        captured["token"] = req.get_header("X-cxp-internal-token")
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    run_tests._http_post("/api/submit", {"goal": "x"})
+
+    assert captured["token"] is None
 
 
 def test_submit_task_includes_optional_evaluation_inputs(monkeypatch):

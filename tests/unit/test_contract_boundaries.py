@@ -227,6 +227,37 @@ async def test_verifier_defaults_score_to_neutral_when_missing_from_a_valid_resp
     assert packet.quality_score == 0.5
 
 
+async def test_verifier_persists_memory_at_most_once_per_execute_call(monkeypatch):
+    from src.agents import verifier as verifier_module
+    from src.agents.verifier import VerifierAgent
+
+    agent = VerifierAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent, "llm", AsyncMock(return_value="raw verdict"))
+    monkeypatch.setattr(agent, "emit_packet", AsyncMock())
+    save = AsyncMock()
+    monkeypatch.setattr(agent._memory, "save", save)
+    monkeypatch.setattr(
+        verifier_module,
+        "parse_contract",
+        lambda *_args: VerificationResult(score=0.5, passed=True, issues=[], suggestion=""),
+    )
+    packet = CXPPacket(
+        type=PacketType.VERIFY,
+        capability="verify",
+        payload=Payload(goal="verify code", context="artifact"),
+    )
+
+    await agent._execute(packet)
+
+    # A production verify packet previously triggered up to 2 separate
+    # memory.json rewrites from within _execute() alone (record_attempt's
+    # own internal save, then a second explicit save for episodic memory) --
+    # on top of a third from _handle_message's own outer save afterward.
+    # Attempt evidence and episodic memory must now be persisted together.
+    assert save.await_count == 1
+
+
 async def test_verifier_skips_episodic_write_during_a_candidate_evaluation_run(monkeypatch):
     from src.agents import verifier as verifier_module
     from src.agents.verifier import VerifierAgent
@@ -412,9 +443,16 @@ async def test_failed_verification_targets_executor_candidate(monkeypatch):
 
     reflect_packet = emitted.await_args_list[0].args[0]
     assert reflect_packet.capability == "reflect"
+    # evidence_class must be explicit, not left to reflect.py's own
+    # ("judgment") default -- planner.py's contract-failure reflects and
+    # run_tests.py's improvement_inputs_for_result() both set it explicitly;
+    # verifier's own reflect-on-fail silently relying on the fallback was
+    # exactly the kind of divergence that let three independent call sites
+    # drift out of sync.
     assert reflect_packet.payload.inputs == {
         "target_role": "executor",
         "source_attempt_id": packet.id,
+        "evidence_class": "judgment",
     }
 
 

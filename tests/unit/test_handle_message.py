@@ -199,6 +199,65 @@ async def test_duplicate_redelivery_of_a_still_running_packet_is_acked_without_r
     msg2.ack.assert_awaited_once()
 
 
+async def test_a_genuine_agent_bug_is_recorded_as_environment_healthy(agent, fake_kv, monkeypatch):
+    """A real bug in agent code (not a platform/network issue) must not be
+    recorded as environment_healthy=False -- that flag feeds directly into
+    select_evaluable_candidate()'s and reflect's health gate, and silently
+    mislabeling every non-timeout failure as transient platform noise would
+    permanently hide genuine recurring bugs from ever being treated as real
+    learning evidence."""
+    _wire(agent, fake_kv, monkeypatch)
+    packet = CXPPacket(type=PacketType.CODE, capability="code", payload=Payload(goal="do a thing"))
+    msg = FakeMsg(packet)
+    monkeypatch.setattr(agent, "_execute", AsyncMock(side_effect=ValueError("malformed skill output")))
+    monkeypatch.setattr(agent, "set_halt", AsyncMock())
+    monkeypatch.setattr(agent, "_emit_diagnose_request", AsyncMock())
+
+    await agent._handle_message(msg)
+
+    attempt = agent._memory.attempts[-1]
+    assert attempt["outcome"] == "agent_error"
+    assert attempt["environment_healthy"] is True
+
+
+async def test_a_bare_timeout_error_is_recorded_as_environment_unhealthy(agent, fake_kv, monkeypatch):
+    _wire(agent, fake_kv, monkeypatch)
+    packet = CXPPacket(type=PacketType.CODE, capability="code", payload=Payload(goal="do a thing"))
+    msg = FakeMsg(packet)
+    monkeypatch.setattr(agent, "_execute", AsyncMock(side_effect=TimeoutError("exceeded total budget")))
+    monkeypatch.setattr(agent, "set_halt", AsyncMock())
+    monkeypatch.setattr(agent, "_emit_diagnose_request", AsyncMock())
+
+    await agent._handle_message(msg)
+
+    attempt = agent._memory.attempts[-1]
+    assert attempt["outcome"] == "timeout"
+    assert attempt["environment_healthy"] is False
+
+
+async def test_an_httpx_style_transient_error_is_recorded_as_environment_unhealthy(agent, fake_kv, monkeypatch):
+    """httpx raises its own exception classes (ReadTimeout, ConnectError,
+    etc.), none of which are `isinstance(exc, TimeoutError)` -- the
+    classification has to match by class name too, the same way
+    diagnostician.py's own TRANSIENT_EXCEPTIONS check already does, or
+    every real network hiccup gets recorded as a genuine agent bug."""
+    _wire(agent, fake_kv, monkeypatch)
+    packet = CXPPacket(type=PacketType.CODE, capability="code", payload=Payload(goal="do a thing"))
+    msg = FakeMsg(packet)
+
+    class ReadTimeout(Exception):
+        pass
+
+    monkeypatch.setattr(agent, "_execute", AsyncMock(side_effect=ReadTimeout("timed out")))
+    monkeypatch.setattr(agent, "set_halt", AsyncMock())
+    monkeypatch.setattr(agent, "_emit_diagnose_request", AsyncMock())
+
+    await agent._handle_message(msg)
+
+    attempt = agent._memory.attempts[-1]
+    assert attempt["environment_healthy"] is False
+
+
 async def test_halted_swarm_drops_packet_without_ever_claiming_it(agent, fake_kv, monkeypatch):
     agent._kv_cache[KV_INFLIGHT] = fake_kv
     agent._kv_cache[KV_STATE] = fake_kv

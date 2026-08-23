@@ -9,7 +9,7 @@ import sys
 import time
 import urllib.request
 
-from src.candidate_evaluation import evaluate_candidate
+from src.candidate_evaluation import build_self_improvement_inputs, evaluate_candidate
 
 # The CronJob invokes this as a bare script (`python -u /app/tests/run_tests.py`),
 # which puts only this script's OWN directory on sys.path, not its parent -- so
@@ -35,9 +35,16 @@ def _http_get(path: str) -> dict:
 
 def _http_post(path: str, data: dict) -> dict:
     payload = json.dumps(data).encode()
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("CXP_INTERNAL_TOKEN")
+    if internal_token:
+        # Without this, the web dashboard strips candidate_id/evaluation_run
+        # from this exact same request as if it came from an untrusted
+        # public caller -- see sanitize_untrusted_inputs() in web_dashboard.py.
+        headers["X-CXP-Internal-Token"] = internal_token
     req = urllib.request.Request(
         f"{API}{path}", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        headers=headers, method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -93,6 +100,16 @@ def run_candidate_comparison(
     This deliberately returns a recommendation only. The caller remains
     responsible for publishing the report and a human remains responsible for
     promotion.
+
+    Each held-out test costs two full submissions (baseline + candidate),
+    and the baseline arm is re-run from scratch on every call rather than
+    reusing a recent baseline result -- deliberately not cached here.
+    Caching would need correct invalidation on every active-skill promotion
+    (a stale cached baseline silently comparing against last week's skill
+    would be worse than the current, merely wasteful, behavior), which is
+    real design work this pass didn't do. At most one eligible candidate is
+    evaluated per hourly run today, so the current cost is bounded; revisit
+    if that assumption changes.
     """
     baseline_results = []
     candidate_results = []
@@ -234,17 +251,13 @@ def improvement_inputs_for_result(result: dict) -> dict | None:
     if not task_id:
         return None
     if result.get("status") == "PLANNER_FAILED" and result.get("evidence_class") == "contract":
-        return {
-            "target_role": "planner",
-            "source_attempt_id": task_id,
-            "evidence_class": "contract",
-        }
+        return build_self_improvement_inputs(
+            target_role="planner", source_attempt_id=task_id, evidence_class="contract",
+        )
     if result.get("evidence_class") == "deterministic-validator":
-        return {
-            "target_role": "executor",
-            "source_attempt_id": task_id,
-            "evidence_class": "deterministic-validator",
-        }
+        return build_self_improvement_inputs(
+            target_role="executor", source_attempt_id=task_id, evidence_class="deterministic-validator",
+        )
     return None
 
 
@@ -287,7 +300,18 @@ def check_regression(baseline: list[float], this_run: list[float]) -> str | None
     """Compare this run's average code-capability score against the recent
     historical average from before this run started. Returns a warning
     string if this looks like a real regression (not just a single bad
-    sample), else None."""
+    sample), else None.
+
+    Deliberately separate from src/candidate_evaluation.py's evaluate_
+    candidate(): that function answers "is this specific staged candidate
+    better than the active skill, per held-out label?" (a promotion gate,
+    scoped to one candidate); this answers "did the swarm's regular,
+    unstaged production traffic just get worse?" (a standing alarm over
+    everything, with no candidate involved at all). Neither can replace the
+    other -- a candidate can regress a single label while overall
+    production drift is fine, and production can drift for reasons with no
+    candidate in flight at all (a shared Ollama model swap, for instance).
+    """
     if len(baseline) < 5 or not this_run:
         return None  # not enough history to compare against yet
     baseline_avg = sum(baseline[-15:]) / len(baseline[-15:])

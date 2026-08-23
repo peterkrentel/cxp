@@ -214,3 +214,21 @@ async def test_halted_swarm_drops_packet_without_ever_claiming_it(agent, fake_kv
     # Never claimed -- a human clearing the halt later shouldn't find this
     # packet id already (falsely) marked in-flight.
     assert await agent._claim_packet(packet.id) is True
+
+
+async def test_timeout_failure_is_recorded_as_platform_unhealthy_evidence(agent, fake_kv, monkeypatch):
+    _wire(agent, fake_kv, monkeypatch)
+    packet = CXPPacket(type=PacketType.CODE, capability="code", payload=Payload(goal="slow task"))
+    msg = FakeMsg(packet)
+    recorded = AsyncMock()
+    monkeypatch.setattr(agent, "record_attempt", recorded)
+    monkeypatch.setattr(agent, "_execute", AsyncMock(side_effect=TimeoutError("LLM call exceeded total budget")))
+    monkeypatch.setattr(agent, "_emit_diagnose_request", AsyncMock())
+
+    await agent._handle_message(msg)
+
+    evidence = recorded.await_args.kwargs
+    assert evidence["capability"] == "code"
+    assert evidence["validation_status"] == "platform_error"
+    assert evidence["outcome"] == "timeout"
+    assert evidence["environment_healthy"] is False

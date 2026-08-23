@@ -593,6 +593,19 @@ class AgentShell(ABC):
             # timeout errors) — fall back to repr() so the halt reason
             # and logs always name at least the exception class.
             detail = str(exc) or repr(exc)
+            outcome = "timeout" if isinstance(exc, TimeoutError) else "agent_error"
+            try:
+                await self.record_attempt(
+                    packet=packet,
+                    capability=packet.capability,
+                    raw_response="",
+                    validation_status="platform_error",
+                    validation_issues=[detail],
+                    outcome=outcome,
+                    environment_healthy=False,
+                )
+            except Exception as record_exc:
+                log.error("[%s] could not record failed attempt: %r", self.agent_id, record_exc)
             packet.fail(self.agent_id, detail)
             self._memory.record_failure(self.agent_id, packet.capability)
             await self._memory.save()

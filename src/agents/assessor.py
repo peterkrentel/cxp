@@ -40,7 +40,8 @@ class AssessorAgent(AgentShell):
             f"Generated artifact:\n{artifact[:2000]}"
         )
         raw = await self.llm(SYSTEM, prompt, packet_id=packet.id,
-                              task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
+                              task_id=packet.task_id, parent_packet_id=packet.parent_packet_id,
+                              json_mode=True)
 
         validation_status = "valid"
         validation_issues: list[str] = []

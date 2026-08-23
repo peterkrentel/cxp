@@ -157,7 +157,8 @@ class DiagnosticianAgent(AgentShell):
         handler and become a second, unrelated halt."""
         try:
             raw = strip_code_fence(await self.llm(BASE_SYSTEM, prompt, packet_id=packet.id,
-                                                   task_id=packet.task_id, parent_packet_id=packet.parent_packet_id))
+                                                   task_id=packet.task_id, parent_packet_id=packet.parent_packet_id,
+                                                   json_mode=True))
             return json.loads(raw, strict=False)
         except json.JSONDecodeError as exc:
             return {

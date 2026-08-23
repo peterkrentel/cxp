@@ -40,7 +40,8 @@ class VerifierAgent(AgentShell):
             f"Artifact to verify:\n{packet.payload.context}"
         )
         raw = await self.llm(BASE_SYSTEM + skill, prompt, packet_id=packet.id,
-                              task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
+                              task_id=packet.task_id, parent_packet_id=packet.parent_packet_id,
+                              json_mode=True)
 
         validation_status = "valid"
         validation_issues: list[str] = []

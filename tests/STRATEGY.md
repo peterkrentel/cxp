@@ -12,10 +12,20 @@ Two separate suites live here, at two different levels:
 1. **SMOKE.** One trivial task ("print hello world"), always run first regardless of which difficulty tier below is active. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X." The suite still continues after a smoke failure, for more signal.
 2. **The difficulty ladder — `TIER_0_TESTS` → `TIER_1_TESTS` → `TIER_2_TESTS` → ...** — `run_tests.py`'s `TIERS` list, walked by `check_plateau.py`. Each tier covers the same 8 [assessor capability labels](../README.md#ai-capability-labeling) except `SELF_IMPROVEMENT` (doesn't fit the pass/fail shape): `CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION`. `TIER_0_TESTS` is deliberately minimal so it's clearable from day one; `TIER_1_TESTS` is the original fixed 8; `TIER_2_TESTS` is harder still. Full case-by-case detail for `TIER_1_TESTS` (goal text, expected behavior, self-improve trigger) is in [`examples.md`](examples.md).
 3. **Regression check.** Compares this run's average `code`-capability score (from episodic memory) against recent history. A real drop since the last skill revision is a materially different signal than "missed today's static threshold." Independent of the difficulty ladder above — this runs regardless of which tier is active.
+4. **Candidate evaluation.** After the ordinary suite, `evaluate_candidate.py` selects at most one healthy, unevaluated executor candidate. It runs four deterministic held-out Tier 0 cases against both active and staged skills, one task at a time, and publishes a recommendation. It never applies a skill revision itself.
 
 Everything runs fully sequentially (one submission at a time, waiting for it to settle) — running tests concurrently piles up enough simultaneous LLM calls on the single Ollama instance to blow past its read timeout. See [`run_tests.py`](run_tests.py) for the actual implementation, [`../docs/architecture.md`](../docs/architecture.md) for how this fits into the rest of the swarm.
 
 The runner also checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped entirely, rather than cascading into a wall of 409s that reads as a false capability regression.
+
+### Which failures may teach the system
+
+- **Platform** — timeout, halt, web API interruption, or rollout gap. Recorded for operations; never evaluated as a skill candidate.
+- **Contract** — malformed planner/verifier/assessor output. Stored as role-specific evidence; planner candidates remain review-only until planner isolation exists.
+- **Deterministic validator** — syntax, YAML, or structural rejection. A healthy executor candidate from this class can enter automatic evaluation.
+- **Judgment** — score-only, security, or documentation-quality conclusion. Retained for review, but excluded from automatic evaluation and promotion.
+
+Candidate reports are retained in JetStream KV and `tests/results/`. A human promotion records the active skill revision and timestamp in the report.
 
 ### Per-test result statuses
 

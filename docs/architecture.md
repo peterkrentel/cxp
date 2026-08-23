@@ -29,6 +29,8 @@ graph TB
         subgraph nats["NATS + JetStream"]
             Stream[["stream CXP_PACKETS<br/>subjects cxp.cap.*<br/>durable consumers, manual ack"]]
             KVSkills[("KV cxp-skills")]
+            KVCandidates[("KV cxp-skill-candidates")]
+            KVEvaluations[("KV cxp-candidate-evaluations")]
             KVState[("KV cxp-state<br/>halt flag + Ollama slot claims")]
         end
 
@@ -70,8 +72,11 @@ graph TB
     Verifier -->|emits assess + reflect + deploy packets| Stream
     Planner & Executor & Verifier & Assessor & Reflect & Deployer -->|on any unhandled error| Diagnostician
 
-    Reflect -->|writes new revision| KVSkills
+    Reflect -->|stages candidate| KVCandidates
     Planner & Executor & Verifier -. reads fresh, per task .-> KVSkills
+    Cron -->|select one eligible executor candidate<br/>and compare held-out tests| KVCandidates
+    Cron -->|write recommendation| KVEvaluations
+    H -->|Promote recommended candidate| KVSkills
 
     Deployer -->|kubectl apply, score ≥ 0.85 only| Applied
     Diagnostician -->|kubectl top pods, read-only| Metrics
@@ -138,7 +143,7 @@ sequenceDiagram
     end
 ```
 
-`verifier` also logs `{capability, skill_revision, score, goal}` to episodic memory on every packet — the only way to actually measure whether a given skill revision produced better scores than the last, instead of assuming the loop is helping.
+Every producing agent records raw/normalized contract evidence in bounded durable attempt memory. `verifier` also logs `{capability, skill_revision, score, goal}` to episodic memory. A candidate is not a live rewrite: after the ordinary hourly suite, `evaluate_candidate.py` selects at most one healthy **executor** candidate with deterministic-validator evidence, runs a held-out active-versus-candidate comparison, and writes its recommendation to `cxp-candidate-evaluations`. The dashboard exposes that report; a human promotion is the only operation that writes candidate content into `cxp-skills`. Planner/verifier candidates remain staged for review until isolated evaluators exist for those roles.
 
 ## 3. Halt gate
 

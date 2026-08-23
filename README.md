@@ -84,19 +84,24 @@ If the swarm is currently halted (see below), submission is rejected with a 409 
 
 ---
 
-## Self-improvement loop
+## Controlled improvement loop
 
-When verifier scores output below threshold:
-1. `reflect` packet spawned with failure details
-2. Reflect agent reads the current `executor` skill text from the shared **NATS JetStream KV** store (`cxp-skills` bucket) — falling back to the ConfigMap-seeded file only before the very first write
-3. Rewrites it with guidance to prevent the same failure
-4. Writes it back to the KV store — JetStream versions every write with an atomic revision number, so there's no separate `.bak`/file-glob bookkeeping and no race between concurrent reflect runs
-5. Every planner/executor/verifier replica re-reads its skill from KV **per task** (not once at process start), so the update is live everywhere on the very next task — no pod restart needed
+The swarm does not apply an LLM-proposed prompt rewrite directly. Its improvement loop is evidence-gated:
 
-Inspect the current skill and its revision history:
+1. Planner, executor, verifier, and assessor output passes through typed contracts. The platform retains raw and normalized output in durable attempt memory.
+2. Contract failures and deterministic validator failures can create role-specific candidates in `cxp-skill-candidates`; platform failures and judgment-only results cannot enter automatic evaluation.
+3. After the hourly suite, the test Job evaluates at most one eligible **executor** candidate on deterministic held-out tasks against the active skill.
+4. The comparison rejects insufficient evidence, platform-unhealthy sources, regressions, and no-improvement results. Its report is written to `cxp-candidate-evaluations` and `tests/results/`.
+5. The dashboard shows the report. Only a human promotion writes recommended content to `cxp-skills`; that report records the applied revision and timestamp.
+
+Planner and verifier candidates remain staged for review until they have their own isolated evaluation paths.
+
+Inspect active skills, staged candidates, and evaluation reports:
 ```bash
 kubectl exec -n cxp deploy/cxp-nats-box -- nats kv get cxp-skills executor
 kubectl exec -n cxp deploy/cxp-nats-box -- nats kv history cxp-skills executor
+kubectl exec -n cxp deploy/cxp-nats-box -- nats kv ls cxp-skill-candidates
+kubectl exec -n cxp deploy/cxp-nats-box -- nats kv ls cxp-candidate-evaluations
 ```
 
 ---
@@ -124,6 +129,7 @@ A **CronJob** runs the test suite hourly inside the cluster. Full detail lives i
 - **SMOKE.** One trivial task ("print hello world"), always run first regardless of which difficulty tier below is active. A failure here means the pipeline itself is broken — a different, more urgent signal than "bad at capability X" — but the suite still continues for more signal rather than aborting.
 - **A difficulty ladder — `TIER_0_TESTS` → `TIER_1_TESTS` → `TIER_2_TESTS` → ...** — the same 8 [assessor capability labels](#ai-capability-labeling) (`CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `DECOMPOSITION`, `SECURITY_AWARENESS`, `INFRA_AS_CODE`, `TESTING`, `DOCUMENTATION` — `SELF_IMPROVEMENT` doesn't fit the pass/fail shape), each tier strictly harder than the last. `TIER_0_TESTS` starts genuinely minimal; `TIER_1_TESTS` is today's original 8; `TIER_2_TESTS` is harder still, grounded in goals this swarm has actually been observed attempting historically, not invented difficulty. Only one tier runs per CronJob invocation — `check_plateau.py` reads the git-tracked run history *before* anything is submitted and promotes to the next tier automatically once the current one clears **10 consecutive clean runs** (`STREAK_TARGET`), no manual reconfiguration. The ladder is open-ended: adding a `TIER_3_TESTS` later is just appending a new list, no promotion-logic changes needed. Each test retries once on failure, and failures trigger reflect, categorized by timeout / format / quality (plus a catch-all for anything uncategorized).
 - **Regression check.** Compares this run's average `code`-capability score against recent history in episodic memory (the same PVC agents write to). A real drop since the last skill revision — not just "missed today's threshold" — triggers a distinct `REGRESSION` reflect task. Independent of the difficulty ladder above.
+- **Candidate evaluation.** After the ordinary suite, the Job evaluates at most one eligible executor candidate on four deterministic held-out Tier 0 cases (`CODE_GENERATION`, `ERROR_HANDLING`, `STRUCTURED_OUTPUT`, `TESTING`). It is skipped when no candidate meets the evidence policy and never promotes a skill itself.
 
 All of this runs fully sequentially (one task submitted at a time, waiting for it to settle before the next — running them concurrently piled up enough simultaneous LLM calls to blow past Ollama's read timeout), and checks the swarm's halt state before every single submission — if the swarm halts mid-run, remaining tests are marked `SKIPPED` (not `FAIL`) and reflect-triggering is skipped, instead of cascading into a wall of 409s that reads as a false capability regression.
 
@@ -168,6 +174,8 @@ requirements.txt
 
 src/
   packet.py             CXP packet schema (Pydantic)
+     contracts.py          typed capability result contracts and normalization
+     candidate_evaluation.py deterministic candidate selection/comparison policy
   agent_shell.py        base agent: NATS listener, LLM caller, JetStream KV helpers
                          (shared skills, swarm halt flag), reputation recording
   memory.py             reputation + episodic/semantic memory — JSON file on a
@@ -180,7 +188,7 @@ src/
     verifier.py          grades output (0.0–1.0), spawns reflect/assess/deploy
     assessor.py          labels artifacts with AI capability tags
     deployer.py           kubectl-applies YAML / runs code artifacts, sandbox-scoped
-    reflect.py            rewrites skill files via the shared KV store
+     reflect.py            stages role-specific skill candidates via the shared KV store
     diagnostician.py       investigates every halt, attaches a diagnosis; never clears one itself
 
 skills/                  ConfigMap-seeded starting text for each skill
@@ -197,6 +205,8 @@ scripts/
 tests/
   run_tests.py           self-improving test runner (submit → evaluate → reflect → retry);
                          select_active_tier() picks TIER_0/1/2_TESTS based on run history
+     evaluate_candidate.py  compares one eligible executor candidate with the active
+                                                             skill and persists its recommendation
   check_plateau.py        per-tier streak tracking + automatic promotion up the difficulty
                          ladder; also publishes a status summary to NATS KV for the dashboard
   results/               JSON result files per run, tagged with which tier ran
@@ -258,7 +268,7 @@ kind-config.yaml       kind cluster with ports 80, 443, 4222 mapped
 - **Deploy path is sandbox-scoped but not fully isolated.** Only the YAML→`kubectl apply` path is namespace-scoped. Python/shell artifacts still run as a plain `subprocess` on the deployer pod (minimal explicit env, but no namespace/seccomp/network isolation).
 - **`ReadWriteOnce` memory PVC** works today only because the kind cluster is single-node. Move to ReadWriteMany (or the KV-store pattern used for skills) before running multi-node.
 - **`src`/`helm/cxp/app/` duplication is real, but `make deploy`/`make sync` handle it** — the Makefile's `sync` target copies `src/`, `main.py`, and `tests/run_tests.py` into `helm/cxp/app/` before every deploy. Only a problem if you edit the `helm/cxp/app/` copy directly, or run `helm upgrade` without going through `make deploy` first.
-- **Reflect only maintains the `executor` skill** — planner/verifier skill files exist but nothing currently rewrites them.
+- **Automatic candidate evaluation is executor-only.** Planner and verifier candidates can be staged, but need their own isolated evaluation paths before automatic comparison/promotion is safe.
 - **Small local models** (`qwen2.5:0.5b`/`1.5b`) occasionally emit malformed JSON or wrong-typed fields, especially from planner's sub-task decomposition. Three specific shapes found live are now handled gracefully instead of halting the swarm (a dead-subject capability default, malformed JSON syntax, list-shaped fields where a string was expected) — but this is closing known cases, not eliminating the underlying unreliability. A new malformed-output shape can still trigger the halt gate; that's expected, not a bug to chase on its own.
 - **The diagnostician only ever diagnoses, never resolves.** It writes a real diagnosis for every halt (root cause + suggested action, and whether the same failure class has recurred recently) but always leaves the halt for a human to clear — a deliberate choice, not a missing feature. Fixing an actual code defect still needs a human — or, per [`docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md`](docs/superpowers/plans/2026-08-16-ephemeral-self-learning-loop.md)'s addendum, a real coding-agent tier that doesn't exist yet.
 - **`make deploy` uses its own isolated Helm repo config**, not your machine's global one (`~/Library/Preferences/helm/repositories.yaml` on macOS). `helm dependency update` refreshes every repo registered wherever `HELM_REPOSITORY_CONFIG` points — left at the default, that means every *other* Helm repo you've ever added on this machine for unrelated projects gets a real network call on every single `make deploy`. The Makefile instead points `HELM_REPOSITORY_CONFIG` at a project-local, gitignored `helm/cxp/.helm-repos.yaml`, seeded by the `helm-repos` target with only this chart's actual 3 dependencies (nats, ollama-helm, traefik). If a `helm` command run outside `make` (e.g. directly at a shell) seems to be missing a repo, that's why — it's using your global config, not this one.

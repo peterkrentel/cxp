@@ -19,6 +19,15 @@ ollamaSmallUrl: "http://cxp-ollama-small:11434"
 ## all qwen2.5:1.5b)                                                            #
 ## --------------------------------------------------------------------------- #
 ollama:
+  # Pinned 2026-08-23 -- the chart's own default (appVersion, unset here)
+  # resolved to ollama/ollama:0.3.11, ~30 releases behind. 0.32.15 is the
+  # most recent version Ollama's own release page marks stable (0.33.0 is
+  # tagged Pre-release/rc as of this pin) -- gets real structured-output
+  # support (format=json_schema, added 0.5.0) plus accumulated fixes
+  # (e.g. a mid-stream parser wedge fix) without jumping onto a
+  # not-yet-stable build.
+  image:
+    tag: "0.32.15"
   ollama:
     models: []    # models already cached in PVC; auto-pull causes PostStartHook failure
   service:
@@ -71,6 +80,9 @@ ollama:
 ## timeouts even after the main instance got its own resource limits.
 ## --------------------------------------------------------------------------- #
 ollama-small:
+  # Deliberately NOT pinned yet -- updating the main instance first and
+  # verifying it (model load, structured output, resource behavior) before
+  # touching this one too, one at a time rather than both at once.
   ollama:
     models: []   # pull qwen2.5:0.5b into this instance's PVC manually after first deploy
   service:

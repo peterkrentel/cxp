@@ -71,6 +71,15 @@ def _infer_fenced_format(text: str) -> Literal["python", "yaml", "markdown", "te
 
 
 def _normalize_plan_tasks(tasks: object) -> list[dict]:
+    if isinstance(tasks, dict) and any(key in tasks for key in ("goal", "type", "capability")):
+        # Under json_mode, the model sometimes emits one bare task object
+        # instead of a JSON array when the goal only really needs a single
+        # sub-task -- confirmed live across 3 separate SMOKE runs
+        # (2026-08-23/24). Treat it as a single-subtask plan rather than
+        # hard-rejecting a genuinely usable response with zero sub-tasks
+        # spawned. Gated on looking task-like (not just any dict) so an
+        # unrelated object (e.g. an error message) still gets rejected below.
+        tasks = [tasks]
     if not isinstance(tasks, list):
         raise ValueError("plan result must be a JSON array")
     normalized = []

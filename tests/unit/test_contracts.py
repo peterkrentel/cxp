@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -45,6 +47,36 @@ def test_plan_contract_repairs_trailing_commas_and_validates_subtasks():
 def test_plan_contract_rejects_malformed_model_output_with_producer_context():
     with pytest.raises(ContractParseError, match="plan"):
         parse_contract("plan", "not JSON")
+
+
+def test_plan_contract_wraps_a_single_bare_object_instead_of_rejecting_it():
+    # Confirmed live 2026-08-23/24 across 3 separate SMOKE runs: under
+    # json_mode, the model sometimes emits one bare task object instead of
+    # a JSON array when the goal only really needs one sub-task (e.g. "write
+    # a Python one-liner"). Previously a hard ContractParseError ("plan
+    # result must be a JSON array") with zero sub-tasks spawned; the single
+    # object is a genuine, usable subtask, just missing its array wrapper.
+    result = parse_contract("plan", json.dumps({
+        "type": "code",
+        "capability": "code",
+        "goal": "write a Python one-liner that prints 'hello world'",
+        "instructions": "print('hello world')",
+        "priority": 2,
+    }))
+
+    assert isinstance(result, PlanResult)
+    assert result.source_count == 1
+    assert len(result.subtasks) == 1
+    assert result.subtasks[0].capability == "code"
+    assert result.dropped_subtasks == []
+
+
+def test_plan_contract_still_rejects_a_bare_object_with_no_task_like_fields():
+    # A dict really could be something else entirely (e.g. an error message
+    # object) -- must not silently wrap and validate literal garbage as if
+    # it were a genuine subtask.
+    with pytest.raises(ContractParseError, match="plan"):
+        parse_contract("plan", json.dumps({"error": "something unrelated"}))
 
 
 def test_artifact_contract_unwraps_one_outer_fence_and_preserves_format():

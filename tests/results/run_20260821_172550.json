@@ -1,0 +1,95 @@
+{
+  "timestamp": "20260821_172550",
+  "tier": 0,
+  "passed": 5,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "WARN",
+      "score": 0.0,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "21b46249"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PASS",
+      "score": 0.7,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "70e26d98"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Missing 'resources' config"
+      ],
+      "task_id": "327e830a"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "e0afe910"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PASS",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [],
+      "task_id": "8f98c47b"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PASS",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "2db112d7"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PASS",
+      "score": 0.75,
+      "score_was_missing": false,
+      "attempt": 1,
+      "issues": [],
+      "task_id": "2b51b9f4"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "WARN",
+      "score": 0.8,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "Invalid YAML: while scanning for the next token\nfound character '`' that cannot start any token\n  in \"<unicode string>\", line 24, column 1:\n    ```\n    ^"
+      ],
+      "task_id": "f45b79b1"
+    },
+    {
+      "label": "TESTING",
+      "status": "WARN",
+      "score": 0.9,
+      "score_was_missing": false,
+      "attempt": 2,
+      "issues": [
+        "No dedicated test function and fewer than 2 assertions found"
+      ],
+      "task_id": "114f8b70"
+    }
+  ]
+}

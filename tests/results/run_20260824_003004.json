@@ -1,0 +1,114 @@
+{
+  "timestamp": "20260824_003004",
+  "tier": 0,
+  "passed": 0,
+  "total": 9,
+  "results": [
+    {
+      "label": "SMOKE",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "STRUCTURED_OUTPUT",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 546785e2: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 546785e2: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "546785e2",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "ERROR_HANDLING",
+      "status": "TIMEOUT"
+    },
+    {
+      "label": "DECOMPOSITION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task baa4781a: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task baa4781a: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "baa4781a",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "SECURITY_AWARENESS",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 59e82b15: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 59e82b15: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "59e82b15",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "TESTING",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 8952bca0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 8952bca0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "8952bca0",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "INFRA_AS_CODE",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 05d37fb0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 05d37fb0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "05d37fb0",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "CODE_GENERATION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 3640786a: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 3640786a: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "3640786a",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    },
+    {
+      "label": "DOCUMENTATION",
+      "status": "PLANNER_FAILED",
+      "score": 0.0,
+      "score_was_missing": true,
+      "attempt": 2,
+      "issues": [
+        "Planner produced no sub-tasks: Failed to decompose task 0cb880e0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned."
+      ],
+      "reason": "Failed to decompose task 0cb880e0: malformed JSON from model (plan contract validation failed: plan result must be a JSON array). No sub-tasks spawned.",
+      "task_id": "0cb880e0",
+      "validator_passed": false,
+      "evidence_class": "contract"
+    }
+  ]
+}

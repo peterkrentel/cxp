@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Self-improving test runner: submit → evaluate → trigger reflect → re-run."""
 
+import argparse
 import json
 import os
 import random
@@ -858,7 +859,57 @@ def evaluate(test: dict, result: dict | None, attempt: int = 1) -> dict:
     }
 
 
+def find_test_by_label(label: str, active_tests: list[dict]) -> dict | None:
+    """Case-insensitive lookup by label, including SMOKE (not part of any
+    tier's list). Pure and testable on its own, same reasoning as
+    select_active_tier(). Returns None on no match so callers can print
+    their own error with the full valid-label list."""
+    if label.upper() == "SMOKE":
+        return SMOKE_TEST
+    return next((t for t in active_tests if t["label"].upper() == label.upper()), None)
+
+
+def run_isolated_test(only_label: str, active_tests: list[dict]) -> None:
+    """--only LABEL: submit exactly one test for isolated, manual debugging
+    -- trace one request end-to-end via the web dashboard and Grafana Tempo
+    (spans are keyed by task_id, see docs/otel-setup.md) with nothing else
+    competing for the LLM. Reuses handle_test_outcome() (still triggers
+    reflect on a real failure, never retries), but skips the regression
+    check, candidate evaluation, and tests/results/ write that the full
+    suite does -- a manual debug run shouldn't perturb tier-promotion
+    history or episodic-memory baselines. Exits the process directly since
+    this is a terminal action, not one step of a larger run.
+    """
+    test = find_test_by_label(only_label, active_tests)
+    if test is None:
+        valid = ", ".join(["SMOKE"] + sorted({t["label"] for t in active_tests}))
+        print(f"✗ Unknown --only label {only_label!r}. Valid: {valid}", flush=True)
+        sys.exit(1)
+
+    print(f"\n[ISOLATED] Running only {test['label']}...", flush=True)
+    task_id = submit_task(test["goal"])
+    if not task_id:
+        print("✗ submit failed", flush=True)
+        sys.exit(1)
+    print(f"  ✓ submitted: {task_id} — waiting for it to finish...", flush=True)
+    raw = wait_for_results({task_id: test}, timeout=test["timeout"]).get(task_id)
+    result = handle_test_outcome(task_id, test, raw)
+
+    print(f"\n{result['status']}: {test['label']}  task_id={task_id}", flush=True)
+    if result.get("issues"):
+        print(f"  issues: {result['issues']}", flush=True)
+    sys.exit(0 if result["status"] == "PASS" else 1)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--only", default=None, metavar="LABEL",
+        help="Run exactly one test by label (e.g. SMOKE, CODE_GENERATION) for isolated "
+             "debugging -- no regression check, no candidate evaluation, no results file.",
+    )
+    args = parser.parse_args()
+
     print("[TRACE] Entering main()", flush=True)
     sys.stdout.flush()
     if not wait_for_ready():
@@ -873,6 +924,11 @@ def main():
         sys.exit(1)
 
     current_tier, active_tests = select_active_tier(_fetch_results_history())
+
+    if args.only:
+        run_isolated_test(args.only, active_tests)
+        return  # run_isolated_test always sys.exit()s -- unreachable, kept for clarity
+
     print(f"\n[TIER] Running Tier {current_tier} ({len(active_tests)} capability tests)", flush=True)
 
     # SMOKE: is the pipeline even working? Run before anything else, and

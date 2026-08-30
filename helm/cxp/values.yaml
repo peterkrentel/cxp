@@ -7,6 +7,13 @@ image:
   pullPolicy: IfNotPresent
 
 natsUrl: "nats://cxp-nats:4222"
+
+# Default false so CI and any other cluster keeps the hourly self-test
+# CronJob running as normal. Flip true only in values.local.yaml when
+# manually isolating a single test via `python3 tests/run_tests.py --only
+# LABEL` -- see docs/otel-setup.md's trace-correlation workflow.
+testRunner:
+  suspend: false
 ollamaUrl: "http://cxp-ollama:11434"
 ollamaModel: "qwen2.5:1.5b"
 # assessor is the only agent on the 0.5b model — routed to its own Ollama

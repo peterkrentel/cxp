@@ -148,6 +148,32 @@ kubectl port-forward -n cxp svc/cxp-web 8080:8080 &
 CXP_WEB_API=http://localhost:8080 make test
 ```
 
+**Isolating one test at a time.** The hourly suite piles SMOKE + 8 tests +
+candidate evaluation onto a single Ollama instance — enough concurrent/
+sequential LLM load that it's hard to tell a genuine resource-contention
+timeout apart from a real agent/model defect. To trace exactly one request
+end-to-end instead:
+```bash
+# helm/cxp/values.local.yaml
+testRunner:
+  suspend: true   # stop the hourly CronJob from competing for the LLM
+```
+```bash
+make deploy
+kubectl port-forward -n cxp svc/cxp-web 8080:8080 &
+CXP_WEB_API=http://localhost:8080 python3 tests/run_tests.py --only SMOKE
+```
+`--only LABEL` accepts `SMOKE` or any capability label in the currently
+active tier (e.g. `CODE_GENERATION`). It submits exactly one task, still
+triggers reflect on a real failure, but skips retry, the regression check,
+candidate evaluation, and the `tests/results/` write — a manual debug run
+shouldn't perturb tier-promotion history or episodic-memory baselines.
+Take the printed `task_id` and correlate it in the web dashboard's packet
+list and in Grafana Tempo (every `llm.call` span is stamped with `task.id`
+and `parent.packet.id` — see [docs/otel-setup.md](docs/otel-setup.md)) to
+walk the exact plan→code→verify chain for that one request.
+
+
 ---
 
 ## Agents

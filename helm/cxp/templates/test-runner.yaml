@@ -5,6 +5,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   schedule: "0 * * * *"
+  # Default false -- see values.yaml. Flipped true locally (values.local.yaml)
+  # when debugging one isolated request at a time via `--only` instead of
+  # the full hourly suite piling concurrent LLM load onto a single Ollama
+  # instance and making it hard to tell resource contention apart from a
+  # real defect.
+  suspend: {{ .Values.testRunner.suspend }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 1

@@ -14,9 +14,9 @@ from __future__ import annotations
 import time
 
 import pytest
-
-from src.agents.diagnostician import TRANSIENT_EXCEPTIONS, KV_RECURRENCE_KEY
 from src.agent_shell import KV_STATE
+from src.agents.diagnostician import KV_RECURRENCE_KEY, TRANSIENT_EXCEPTIONS
+from src.packet import CXPPacket, PacketType, Payload
 
 
 def _is_timeout_class(exc_detail: str) -> bool:
@@ -51,6 +51,7 @@ async def test_recent_timeout_count_only_counts_within_window(fake_kv):
     assert await d._recent_timeout_count() == 0
     await d._record_timeout()
     assert await d._recent_timeout_count() == 1
+
     await d._record_timeout()
     assert await d._recent_timeout_count() == 2
 
@@ -63,3 +64,33 @@ async def test_recent_timeout_count_only_counts_within_window(fake_kv):
     await fake_kv.put(KV_RECURRENCE_KEY, json.dumps(history).encode())
 
     assert await d._recent_timeout_count() == 1
+
+
+async def test_non_timeout_diagnosis_preserves_packet_lineage(monkeypatch):
+    from src.agents.diagnostician import DiagnosticianAgent
+
+    d = DiagnosticianAgent()
+    packet = CXPPacket(
+        type=PacketType.DIAGNOSE,
+        capability="diagnose",
+        task_id="task-123",
+        parent_packet_id="parent-456",
+        payload=Payload(goal="diagnose"),
+    )
+    observed = {}
+
+    async def fake_llm(system, prompt, **kwargs):
+        observed.update(kwargs)
+        return '{"diagnosis": "ok", "suggested_action": "resume"}'
+
+    monkeypatch.setattr(d, "llm", fake_llm)
+
+    result = await d._diagnose("halt details", packet)
+
+    assert result == {"diagnosis": "ok", "suggested_action": "resume"}
+    assert observed == {
+        "packet_id": packet.id,
+        "task_id": packet.task_id,
+        "parent_packet_id": packet.parent_packet_id,
+        "json_mode": True,
+    }

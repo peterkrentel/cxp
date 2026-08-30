@@ -246,6 +246,30 @@ def trigger_improvement(label: str, issues: list[str], inputs: dict | None = Non
     print(f"  ↑ Improvement task submitted: {resp.get('task_id', '?')}")
 
 
+def handle_test_outcome(task_id: str, test: dict, raw: dict | None) -> dict:
+    """Evaluate one test's raw result and trigger reflect on failure -- no
+    retry. reflect only ever stages a KV candidate (src/agents/reflect.py),
+    never rewrites the active skill live, so an immediate retry here would
+    just repeat the same failure against the exact same, unchanged skill --
+    zero possible signal for a full extra plan->code->verify chain of LLM
+    calls. src/candidate_evaluation.py's held-out baseline-vs-candidate
+    comparison is the real place improvement gets validated, not a blind
+    resubmission here.
+    """
+    r = evaluate(test, raw, attempt=1)
+    if r["status"] == "PASS":
+        return r
+
+    halt = check_halted()
+    if halt:
+        return {**r, "status": "SKIPPED", "reason": f"swarm halted: {halt.get('reason')}"}
+
+    if raw:
+        print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
+        trigger_improvement(r["label"], r["issues"], inputs=improvement_inputs_for_result(r))
+    return r
+
+
 def improvement_inputs_for_result(result: dict) -> dict | None:
     task_id = result.get("task_id")
     if not task_id:
@@ -922,38 +946,14 @@ def main():
         else:
             print(f"  ⚠ [{test['label']}] timed out waiting — moving on to next test anyway")
 
-    # Evaluate and check for first-attempt failures needing retry. Retries
-    # are submitted and awaited one at a time too, same reasoning as above —
-    # no concurrent Ollama load from the retry phase either. Skipped entirely
-    # if the swarm is halted — a retry would just get 409'd too.
+    # Evaluate and trigger reflect on any first-attempt failure -- no retry
+    # (see handle_test_outcome()'s own docstring for why one would be
+    # pointless). Skipped entirely if the swarm is halted.
     for task_id, test in task_map.items():
-        raw = result_map.get(task_id)
-        r = evaluate(test, raw, attempt=1)
-        if r["status"] == "PASS":
-            results.append(r)
-            continue
-
-        halt = check_halted()
-        if halt:
+        r = handle_test_outcome(task_id, test, result_map.get(task_id))
+        if r["status"] == "SKIPPED":
             halted_mid_run = True
-            results.append({**r, "status": "SKIPPED", "reason": f"swarm halted before retry: {halt.get('reason')}"})
-            continue
-
-        if raw:
-            print(f"  ✗ [{r['label']}] FAILED — triggering self-improvement: {r['issues']}")
-            trigger_improvement(r["label"], r["issues"], inputs=improvement_inputs_for_result(r))
-            retry_id = submit_task(test["goal"])
-            if retry_id:
-                print(f"  ✓ [{r['label']}] retry submitted: {retry_id} — waiting for it to finish...")
-                retry_result = wait_for_results({retry_id: test}, timeout=test["timeout"])
-                results.append(evaluate(test, retry_result.get(retry_id), attempt=2))
-            else:
-                # retry submission itself failed — don't silently drop the
-                # first-attempt result, or it counts toward neither pass nor fail
-                print(f"  ⚠️  [{r['label']}] retry submission failed — keeping first-attempt result")
-                results.append(r)
-        else:
-            results.append(r)
+        results.append(r)
 
     print(f"\n{'='*60}")
     print("RESULTS")

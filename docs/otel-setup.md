@@ -27,19 +27,29 @@ none of this does anything until the Secret below actually exists.
      fields spelled out directly.
    - **API token** (the `glc_...` string) — the *password* half.
 
-3. Base64-encode `<instanceID>:<token>` and build the Secret. Do this
-   with your own shell, not by pasting the token anywhere it'll be
-   logged or committed:
+3. Create `.env.otel` at the repo root (gitignored, never commit this):
 
-   ```bash
-   B64=$(printf '%s' "<instanceID>:<token>" | base64 | tr -d '\n')
-   kubectl create secret generic cxp-otel-credentials -n cxp \
-     --from-literal=headers="Authorization=Basic%20${B64}"
+   ```
+   CXP_OTEL_INSTANCE_ID=<instanceID>
+   CXP_OTEL_API_TOKEN=<token>
    ```
 
-   The `%20` (not a literal space) matters — Python's OTLP exporter is
-   picky about a raw space in `OTEL_EXPORTER_OTLP_HEADERS` and silently
-   mis-parses it otherwise.
+   Then run:
+
+   ```bash
+   make otel-secret
+   ```
+
+   This base64-encodes `<instanceID>:<token>` and creates/updates the
+   `cxp-otel-credentials` Secret (idempotent — safe to re-run any time).
+   **A kind cluster's Secrets live only inside that node's container** —
+   `make cluster`/`make reset` silently wipes this Secret along with
+   everything else, even though `values.local.yaml` still says
+   `otel.enabled: true`, leaving every pod stuck in
+   `CreateContainerConfigError` until `make otel-secret` is re-run.
+   `.env.otel` persists on your machine across cluster recreations, so
+   this is a one-line fix each time rather than re-deriving the base64
+   header by hand.
 
 4. Create `helm/cxp/values.local.yaml` (gitignored, `make deploy` picks
    it up automatically if present — see the Makefile's `LOCAL_VALUES_FLAG`):

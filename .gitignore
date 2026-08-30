@@ -7,4 +7,5 @@ helm/cxp/.helm-repos.yaml
 helm/cxp/.helm-repos.lock
 helm/cxp/values.local.yaml
 toekn-otel.txt
+.env.otel
 

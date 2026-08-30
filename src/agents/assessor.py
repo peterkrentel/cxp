@@ -13,10 +13,10 @@ Given a task goal and the generated artifact, identify which AI capabilities are
 
 Return ONLY a JSON object:
 {
-  "labels": ["LABEL1", "LABEL2"],
-  "verdict": "one sentence summary",
-  "strengths": ["what it did well"],
-  "gaps": ["what is missing or weak"]
+  "labels": [<zero or more labels from the list below, as real values -- never the words "LABEL1"/"LABEL2">],
+  "verdict": "<one sentence describing what THIS artifact actually does>",
+  "strengths": ["<what it did well>"],
+  "gaps": ["<what is missing or weak>"]
 }
 
 Available labels:
@@ -25,6 +25,27 @@ DECOMPOSITION, INFRA_AS_CODE, TESTING, DOCUMENTATION, SELF_IMPROVEMENT
 
 No prose, no fences.
 """
+
+# Confirmed live 2026-08-30 (issue #87): this model repeatedly echoes the
+# prompt's own example values verbatim instead of substituting real ones --
+# both the old "LABEL1"/"LABEL2" placeholder tokens, and sometimes a real
+# but contextually wrong label copied from a previous run's actual answer.
+# sanitize_labels() can only guarantee the former never survives (a
+# deterministic filter against the real taxonomy) -- it cannot verify a real
+# label is actually correct for this artifact, that remains a model-quality
+# limit no static check can close.
+VALID_LABELS = frozenset({
+    "CODE_GENERATION", "ERROR_HANDLING", "STRUCTURED_OUTPUT", "SECURITY_AWARENESS",
+    "DECOMPOSITION", "INFRA_AS_CODE", "TESTING", "DOCUMENTATION", "SELF_IMPROVEMENT",
+})
+
+
+def sanitize_labels(labels: list[str] | None) -> list[str]:
+    """Drop anything that isn't a real taxonomy member (e.g. the old
+    'LABEL1'/'LABEL2' placeholder echo). Order-preserving."""
+    if not labels:
+        return []
+    return [label for label in labels if label in VALID_LABELS]
 
 
 class AssessorAgent(AgentShell):
@@ -54,6 +75,8 @@ class AssessorAgent(AgentShell):
             validation_status = "contract_error"
             validation_issues = [str(e)]
             result = {"labels": [], "verdict": raw[:200], "strengths": [], "gaps": []}
+
+        result["labels"] = sanitize_labels(result.get("labels"))
 
         await self.record_attempt(
             packet=packet,

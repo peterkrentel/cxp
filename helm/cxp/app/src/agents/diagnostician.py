@@ -21,7 +21,7 @@ import logging
 import os
 import time
 
-from ..agent_shell import AgentShell, OLLAMA_URL, TRANSIENT_EXCEPTIONS, strip_code_fence
+from ..agent_shell import OLLAMA_URL, TRANSIENT_EXCEPTIONS, AgentShell, strip_code_fence
 from ..packet import CXPPacket
 
 log = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ class DiagnosticianAgent(AgentShell):
             f"Ollama instance state (/api/ps, models currently loaded/running):\n{ollama_state}\n"
             f"Ollama's own recent request log (real duration + status per call):\n{ollama_request_log}\n"
         )
-        result = await self._diagnose(prompt)
+        result = await self._diagnose(prompt, packet)
         await self._think(f"🩺 diagnosis: {result.get('diagnosis', '')[:200]} — awaiting human")
         await self._attach_diagnosis(result)
         await self._memory.save()
@@ -150,7 +150,7 @@ class DiagnosticianAgent(AgentShell):
         history = [ts for ts in history if now - ts < RECURRENCE_WINDOW_SECONDS] + [now]
         await kv.put(KV_RECURRENCE_KEY, json.dumps(history).encode())
 
-    async def _diagnose(self, prompt: str) -> dict:
+    async def _diagnose(self, prompt: str, packet: CXPPacket) -> dict:
         """Best-effort LLM diagnosis for the non-timeout case. If this call
         itself fails, fall back to a plain "needs human review" verdict
         instead of letting the failure cascade into the generic crash

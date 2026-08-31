@@ -381,25 +381,32 @@ def validate_error_handling(code: str, required_exceptions: list[str]) -> tuple[
 def validate_yaml(text: str) -> tuple[bool, list[str]]:
     try:
         import yaml
-        yaml.safe_load(_strip_markdown(text))
-        return True, []
+        docs = list(yaml.safe_load_all(_strip_markdown(text)))
     except Exception as e:
         return False, [f"Invalid YAML: {e}"]
+    if not docs:
+        return False, ["YAML did not parse to any documents"]
+    return True, []
 
 
 def validate_k8s_deployment(text: str, require_resources: bool = True) -> tuple[bool, list[str]]:
     try:
         import yaml
-        doc = yaml.safe_load(_strip_markdown(text))
+        docs = list(yaml.safe_load_all(_strip_markdown(text)))
     except Exception as e:
         return False, [f"Invalid YAML: {e}"]
-    if not isinstance(doc, dict):
-        return False, ["YAML did not parse to a mapping"]
+    deployment = next(
+        (doc for doc in docs if isinstance(doc, dict) and doc.get("kind") == "Deployment"),
+        None,
+    )
+    if deployment is None:
+        kinds = [doc.get("kind") if isinstance(doc, dict) else type(doc).__name__ for doc in docs]
+        if not docs:
+            return False, ["YAML did not parse to any documents"]
+        return False, [f"no Deployment found among documents (kinds: {kinds})"]
     issues = []
-    if doc.get("kind") != "Deployment":
-        issues.append(f"kind is {doc.get('kind')!r}, expected 'Deployment'")
     if require_resources:
-        flat = str(doc).lower()
+        flat = str(deployment).lower()
         if "resources" not in flat or "limits" not in flat:
             issues.append("No resources.limits found anywhere in the manifest")
     return len(issues) == 0, issues

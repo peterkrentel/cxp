@@ -66,6 +66,34 @@ spec:
     assert valid is True
 
 
+def test_k8s_deployment_accepts_multi_document_yaml():
+    deployment_plus_service = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 80
+"""
+    valid, issues = validate_k8s_deployment(deployment_plus_service)
+    assert valid is True, issues
+
+
 def test_security_check_flags_unsanitized_path_from_input():
     unsafe = (
         "import requests\n"

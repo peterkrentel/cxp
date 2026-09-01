@@ -127,7 +127,7 @@ class VerifierAgent(AgentShell):
         # Spawn assess packet for capability labeling
         assess = CXPPacket(
             origin=self.agent_id,
-            type=PacketType.REFLECT,
+            type=PacketType.ASSESS,
             capability="assess",
             priority=1,
             task_id=packet.task_id,
@@ -149,7 +149,7 @@ class VerifierAgent(AgentShell):
         if not is_candidate_traffic and packet.quality_score is not None and packet.quality_score >= 0.85:
             deploy = CXPPacket(
                 origin=self.agent_id,
-                type=PacketType.REFLECT,
+                type=PacketType.DEPLOY,
                 capability="deploy",
                 priority=2,
                 task_id=packet.task_id,

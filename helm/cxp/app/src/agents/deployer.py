@@ -15,7 +15,8 @@ import time
 import yaml
 
 from ..agent_shell import AgentShell, strip_code_fence
-from ..packet import CXPPacket
+from ..candidate_evaluation import build_self_improvement_inputs
+from ..packet import CXPPacket, PacketType, Payload
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +97,40 @@ class DeployerAgent(AgentShell):
                 f"Deployed: {goal[:80]} — {result.get('outcome', 'unknown')}"
             )
             await self._memory.save()
+
+        # #86: verifier already scored this artifact >= DEPLOY_THRESHOLD (the
+        # early return above is the only way to reach this point without
+        # that being true) -- a real execution failure here is much stronger,
+        # deterministic evidence that something is actually wrong than
+        # verifier's own opinion, and previously vanished silently instead of
+        # ever reaching reflect. Confirmed live 2026-08-30 twice (a circle-
+        # area function and a doubling function, each with a wrong expected
+        # value in their own generated test that verifier scored 0.9/passed).
+        if not result.get("deployed", False):
+            reflect = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="reflect",
+                priority=3,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal="Self-improve: verifier passed an artifact that failed at actual execution",
+                    instructions=(
+                        f"Verifier scored this artifact {score:.2f} (>= {DEPLOY_THRESHOLD}) and it "
+                        f"was deployed, but it failed at actual execution: {result.get('outcome', 'unknown')}\n"
+                        f"stderr: {result.get('stderr', '')[:500]}\n"
+                        "Propose a one-paragraph update to the executor skill file to prevent this."
+                    ),
+                    context=artifact,
+                    inputs=build_self_improvement_inputs(
+                        target_role="executor", source_attempt_id=packet.task_id,
+                        evidence_class="deterministic-validator",
+                    ),
+                ),
+            )
+            reflect.append_trace(self.agent_id, "created", "spawned due to deploy failure despite passing score")
+            await self.emit_packet(reflect)
 
         return json.dumps(result)
 

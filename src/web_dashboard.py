@@ -305,7 +305,7 @@ def build_submission_packet(body: dict) -> CXPPacket:
     capability = body.get("capability", "plan")
     type_map = {"plan": PacketType.PLAN, "code": PacketType.CODE,
                 "verify": PacketType.VERIFY, "reflect": PacketType.REFLECT,
-                "assess": PacketType.PLAN, "deploy": PacketType.PLAN}
+                "assess": PacketType.ASSESS, "deploy": PacketType.DEPLOY}
     return CXPPacket(
         origin="web-ui",
         type=type_map.get(capability, PacketType.PLAN),

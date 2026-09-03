@@ -23,6 +23,8 @@ class PacketType(str, Enum):
     CODE = "code"
     VERIFY = "verify"
     REFLECT = "reflect"
+    ASSESS = "assess"
+    DEPLOY = "deploy"
     DIAGNOSE = "diagnose"
     MEMORY = "memory"
     ROUTE = "route"

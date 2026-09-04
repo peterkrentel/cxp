@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from ..agent_shell import AgentShell
+from ..agent_shell import AgentShell, TRANSIENT_EXCEPTIONS
 from ..contracts import SkillRevisionCandidate
 from ..candidate_evaluation import resolve_source_attempt
 from ..packet import CXPPacket
@@ -16,6 +16,11 @@ log = logging.getLogger(__name__)
 SKILLS_DIR = Path(os.environ.get("CXP_SKILLS_DIR", "/skills"))
 DEFAULT_SKILL_TARGET = "executor"
 LEARNABLE_SKILL_TARGETS = {"planner", "executor", "verifier"}
+
+
+def _is_transient_llm_failure(exc: Exception) -> bool:
+    detail = str(exc) or repr(exc)
+    return any(name == type(exc).__name__ or name in detail for name in TRANSIENT_EXCEPTIONS)
 
 SYSTEM = """You are the self-improvement agent in a distributed AI swarm.
 You receive a failure report and the current skill file for an agent.
@@ -59,8 +64,15 @@ class ReflectAgent(AgentShell):
             f"Failure report:\n{packet.payload.instructions}\n\n"
             f"Failed artifact context:\n{packet.payload.context[:800]}"
         )
-        improved = await self.llm(SYSTEM, prompt, packet_id=packet.id,
-                                   task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
+        try:
+            improved = await self.llm(SYSTEM, prompt, packet_id=packet.id,
+                                       task_id=packet.task_id, parent_packet_id=packet.parent_packet_id)
+        except Exception as exc:
+            if not _is_transient_llm_failure(exc):
+                raise
+            detail = str(exc) or repr(exc)
+            await self.record_validation_failure("reflect LLM unavailable", detail)
+            return f"No candidate created: reflect LLM timed out or was unavailable ({detail})."
 
         candidate = SkillRevisionCandidate(
             target_role=target_role,

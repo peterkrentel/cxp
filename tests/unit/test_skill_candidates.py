@@ -117,6 +117,26 @@ async def test_reflect_rejects_platform_unhealthy_source_attempt(monkeypatch):
     assert "platform-unhealthy" in result
 
 
+async def test_reflect_llm_timeout_does_not_raise_or_create_candidate(monkeypatch):
+    agent = ReflectAgent()
+    monkeypatch.setattr(agent, "get_skill", AsyncMock(return_value="Current executor skill"))
+    monkeypatch.setattr(agent, "llm", AsyncMock(side_effect=TimeoutError("LLM call exceeded total budget of 900.0s")))
+    put_candidate = AsyncMock()
+    monkeypatch.setattr(agent, "put_skill_candidate", put_candidate)
+    monkeypatch.setattr(agent._memory, "save", AsyncMock())
+    packet = CXPPacket(
+        type=PacketType.REFLECT,
+        capability="reflect",
+        payload=Payload(goal="Improve executor output", instructions="Verifier found bad code."),
+    )
+
+    result = await agent._execute(packet)
+
+    put_candidate.assert_not_awaited()
+    assert "No candidate created" in result
+    assert "timed out" in result
+
+
 async def test_reflect_resolves_a_platform_unhealthy_source_attempt_by_task_id(monkeypatch):
     agent = ReflectAgent()
     # run_tests.py's improvement_inputs_for_result() passes a test task_id

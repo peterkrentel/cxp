@@ -99,6 +99,25 @@ def test_settles_immediately_when_planner_spawns_zero_subtasks(monkeypatch):
     assert "malformed JSON" in results["t1"]["output"]
 
 
+def test_settles_immediately_when_planner_rejects_degenerate_plan(monkeypatch):
+    import tests.run_tests as rt
+
+    def fake_get_state():
+        return {"packets": [
+            {"task_id": "t1", "type": "plan", "status": "done",
+             "output": "Rejected degenerate plan for task t1: at least 2 sub-tasks and a verify step are required."},
+        ]}
+
+    monkeypatch.setattr(rt, "get_state", fake_get_state)
+    monkeypatch.setattr(rt.time, "sleep", lambda s: None)
+
+    results = wait_for_results({"t1": {}}, timeout=10)
+
+    assert "t1" in results
+    assert results["t1"]["decomposition_failed"] is True
+    assert "Rejected degenerate plan" in results["t1"]["output"]
+
+
 def test_freshly_spawned_children_still_in_flight_is_not_a_decomposition_failure(monkeypatch):
     """Found live 2026-08-20, minutes after the fix above shipped: a
     genuinely healthy decomposition ("Spawned 3 sub-packets for task

@@ -199,6 +199,7 @@ def wait_for_results(task_ids: dict, timeout=480) -> dict:
             elif plan_done_output is not None and (
                 plan_done_output.startswith("Failed to decompose")
                 or plan_done_output.startswith("Spawned 0 sub-packets")
+                or plan_done_output.startswith("Rejected degenerate plan")
             ):
                 # Planner finished but spawned nothing -- e.g. a malformed/
                 # truncated LLM decomposition response caught by planner.py's

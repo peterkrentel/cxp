@@ -26,6 +26,16 @@ def _coerce_str(value: object) -> str:
     return str(value) if value is not None else ""
 
 
+def _planner_contract_issue(plan) -> str | None:
+    if len(plan.subtasks) >= 2 and any(task.capability == "verify" for task in plan.subtasks):
+        return None
+    return (
+        f"Planner output invalid: at least 2 sub-tasks are required and at least one must be verify. "
+        f"Received {len(plan.subtasks)} sub-task(s): "
+        f"{[task.capability for task in plan.subtasks]}"
+    )
+
+
 BASE_SYSTEM = """You are a task planner in a distributed AI swarm.
 Given a high-level goal, decompose it into 2-5 focused sub-tasks.
 Return ONLY a JSON array of objects with these fields:
@@ -95,17 +105,59 @@ class PlannerAgent(AgentShell):
                 await self.record_validation_failure("decomposition JSON parse", f"{e}\nRaw: {raw[:200]}")
                 return f"Failed to decompose task {packet.task_id[:8]}: malformed JSON from model ({e}). No sub-tasks spawned."
 
-            await self.record_attempt(
-                packet=packet,
-                capability="plan",
-                raw_response=raw,
-                normalized_response=plan.model_dump_json(),
-                validation_status="valid",
-                environment_healthy=True,
-            )
-
         for detail in plan.dropped_subtasks:
             await self.record_validation_failure("malformed sub-task", detail)
+
+        contract_issue = _planner_contract_issue(plan)
+        if contract_issue:
+            raw = await self.llm(
+                BASE_SYSTEM + skill,
+                f"Goal: {packet.payload.goal}\nContext: {packet.payload.context}\n"
+                f"Previous planner output violated the contract: {contract_issue}\n"
+                "Return a corrected JSON array with 2-5 sub-tasks, including at least one verify sub-task.",
+                packet_id=packet.id,
+                task_id=packet.task_id,
+                parent_packet_id=packet.parent_packet_id,
+                json_mode=True,
+            )
+            try:
+                plan = parse_contract("plan", raw)
+            except ContractParseError as e:
+                contract_issue = f"Planner retry produced malformed JSON: {e}"
+            else:
+                for detail in plan.dropped_subtasks:
+                    await self.record_validation_failure("malformed sub-task", detail)
+                contract_issue = _planner_contract_issue(plan)
+
+        if contract_issue:
+            reflect = CXPPacket(
+                origin=self.agent_id,
+                type=PacketType.REFLECT,
+                capability="reflect",
+                priority=3,
+                task_id=packet.task_id,
+                parent_packet_id=packet.id,
+                payload=Payload(
+                    goal="Self-improve: repair planner structured output",
+                    instructions=f"Plan contract error: {contract_issue}",
+                    context=raw,
+                    inputs=build_self_improvement_inputs(
+                        target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
+                    ),
+                ),
+            )
+            await self.emit_packet(reflect)
+            await self.record_validation_failure("planner contract", contract_issue)
+            return f"Rejected degenerate plan for task {packet.task_id[:8]}: at least 2 sub-tasks and a verify step are required."
+
+        await self.record_attempt(
+            packet=packet,
+            capability="plan",
+            raw_response=raw,
+            normalized_response=plan.model_dump_json(),
+            validation_status="valid",
+            environment_healthy=True,
+        )
 
         if not plan.subtasks and plan.source_count > 0:
             # A structurally valid parse where every subtask still failed

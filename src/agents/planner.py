@@ -9,7 +9,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from ..agent_shell import AgentShell
 from ..candidate_evaluation import build_self_improvement_inputs
-from ..contracts import ContractParseError, parse_contract
+from ..contracts import ContractParseError, PlanResult, PlannedTask, parse_contract
 from ..packet import CXPPacket, PacketType, Payload, RoutingHints
 from ..telemetry import get_tracer
 
@@ -34,6 +34,25 @@ def _planner_contract_issue(plan) -> str | None:
         f"Received {len(plan.subtasks)} sub-task(s): "
         f"{[task.capability for task in plan.subtasks]}"
     )
+
+
+def _fallback_plan(goal: str, issue: str) -> PlanResult:
+    return PlanResult(subtasks=[
+        PlannedTask(
+            type="code",
+            capability="code",
+            goal=goal,
+            instructions=f"Implement the requested goal. Planner fallback reason: {issue}",
+            priority=3,
+        ),
+        PlannedTask(
+            type="verify",
+            capability="verify",
+            goal=f"Verify implementation for: {goal}",
+            instructions="Run an appropriate validation of the code task output and report issues clearly.",
+            priority=3,
+        ),
+    ], source_count=2)
 
 
 BASE_SYSTEM = """You are a task planner in a distributed AI swarm.
@@ -130,25 +149,8 @@ class PlannerAgent(AgentShell):
                 contract_issue = _planner_contract_issue(plan)
 
         if contract_issue:
-            reflect = CXPPacket(
-                origin=self.agent_id,
-                type=PacketType.REFLECT,
-                capability="reflect",
-                priority=3,
-                task_id=packet.task_id,
-                parent_packet_id=packet.id,
-                payload=Payload(
-                    goal="Self-improve: repair planner structured output",
-                    instructions=f"Plan contract error: {contract_issue}",
-                    context=raw,
-                    inputs=build_self_improvement_inputs(
-                        target_role="planner", source_attempt_id=packet.id, evidence_class="contract",
-                    ),
-                ),
-            )
-            await self.emit_packet(reflect)
             await self.record_validation_failure("planner contract", contract_issue)
-            return f"Rejected degenerate plan for task {packet.task_id[:8]}: at least 2 sub-tasks and a verify step are required."
+            plan = _fallback_plan(packet.payload.goal, contract_issue)
 
         await self.record_attempt(
             packet=packet,

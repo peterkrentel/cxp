@@ -64,6 +64,11 @@ async def test_planner_delegates_decomposition_parsing_to_contract(monkeypatch):
         capability="code",
         goal="write a function",
         instructions="return code",
+    ), PlannedTask(
+        type="verify",
+        capability="verify",
+        goal="validate output",
+        instructions="run tests",
     )])
     calls = []
 
@@ -77,7 +82,7 @@ async def test_planner_delegates_decomposition_parsing_to_contract(monkeypatch):
     await p._execute(_goal_packet())
 
     assert calls == [("plan", "raw model output")]
-    emitted.assert_awaited_once()
+    assert emitted.await_count == 2
 
 
 async def test_planner_records_contract_failure_as_learnable_evidence(monkeypatch):
@@ -117,6 +122,11 @@ async def test_planner_records_normalized_contract_evidence_on_success(monkeypat
             "type": "code",
             "goal": "write a function",
             "instructions": "return code"
+        },
+        {
+            "type": "verify",
+            "goal": "validate output",
+            "instructions": "run tests"
         }
     ]"""
     p, _ = await _planner(monkeypatch, raw)
@@ -133,7 +143,10 @@ async def test_planner_records_normalized_contract_evidence_on_success(monkeypat
 
 
 async def test_planner_propagates_candidate_evaluation_inputs_to_child(monkeypatch):
-    sub_tasks = [{"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"}]
+    sub_tasks = [
+        {"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"},
+        {"type": "verify", "capability": "verify", "goal": "validate code", "instructions": "run tests"},
+    ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
     monkeypatch.setattr(p, "record_attempt", AsyncMock())
     packet = _goal_packet()
@@ -141,8 +154,9 @@ async def test_planner_propagates_candidate_evaluation_inputs_to_child(monkeypat
 
     await p._execute(packet)
 
-    child: CXPPacket = emitted.await_args.args[0]
-    assert child.payload.inputs == {"candidate_id": "candidate-1"}
+    children = [call.args[0] for call in emitted.await_args_list]
+    assert len(children) == 2
+    assert all(child.payload.inputs == {"candidate_id": "candidate-1"} for child in children)
 
 
 async def test_planner_requests_planner_candidate_when_every_subtask_is_invalid(monkeypatch):
@@ -155,25 +169,62 @@ async def test_planner_requests_planner_candidate_when_every_subtask_is_invalid(
 
     result = await p._execute(_goal_packet())
 
-    # A silent zero-subtask outcome after a structurally valid parse is the
-    # same missed-learning-signal shape as a hard contract error -- it must
-    # still request planner-targeted feedback, not just log locally.
     emitted.assert_awaited_once()
     reflect_packet: CXPPacket = emitted.await_args.args[0]
     assert reflect_packet.capability == "reflect"
     assert reflect_packet.payload.inputs["target_role"] == "planner"
-    assert "Spawned 0 sub-packets" in result
+    assert "at least 2 sub-tasks" in result.lower()
 
 
 async def test_missing_capability_falls_back_to_type_not_to_dead_any_subject(monkeypatch):
-    sub_tasks = [{"type": "code", "goal": "write a function", "instructions": "do it"}]
+    sub_tasks = [
+        {"type": "code", "goal": "write a function", "instructions": "do it"},
+        {"type": "verify", "capability": "verify", "goal": "validate", "instructions": "run tests"},
+    ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
 
     await p._execute(_goal_packet())
 
+    emitted.assert_awaited()
+    first_child: CXPPacket = emitted.await_args_list[0].args[0]
+    assert first_child.capability == "code"
+    assert first_child.type == PacketType.CODE
+
+
+async def test_planner_rejects_single_subtask_or_missing_verify(monkeypatch):
+    raw = json.dumps([
+        {"type": "code", "capability": "code", "goal": "write a function", "instructions": "do it"}
+    ])
+    p, emitted = await _planner(monkeypatch, raw)
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+
+    result = await p._execute(_goal_packet())
+
+    assert "at least 2 sub-tasks" in result.lower()
+    assert "verify" in result.lower()
     emitted.assert_awaited_once()
-    child: CXPPacket = emitted.await_args.args[0]
-    assert child.capability == "code"  # not "any" -- "any" has no consumer
+    reflect_packet: CXPPacket = emitted.await_args.args[0]
+    assert reflect_packet.capability == "reflect"
+
+
+async def test_planner_retries_degenerate_plan_before_reflecting(monkeypatch):
+    degenerate = json.dumps([
+        {"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"}
+    ])
+    repaired = json.dumps([
+        {"type": "code", "capability": "code", "goal": "write code", "instructions": "return it"},
+        {"type": "verify", "capability": "verify", "goal": "validate code", "instructions": "run tests"},
+    ])
+    p, emitted = await _planner(monkeypatch, degenerate)
+    p.llm = AsyncMock(side_effect=[degenerate, repaired])
+    monkeypatch.setattr(p, "record_attempt", AsyncMock())
+
+    result = await p._execute(_goal_packet())
+
+    assert p.llm.await_count == 2
+    assert emitted.await_count == 2
+    assert [call.args[0].capability for call in emitted.await_args_list] == ["code", "verify"]
+    assert "Spawned 2 sub-packets" in result
 
 
 async def test_list_valued_goal_field_is_coerced_not_crashed_on(monkeypatch):
@@ -182,15 +233,20 @@ async def test_list_valued_goal_field_is_coerced_not_crashed_on(monkeypatch):
         "capability": "code",
         "goal": ["first point", "second point"],
         "instructions": "do it",
+    }, {
+        "type": "verify",
+        "capability": "verify",
+        "goal": "validate output",
+        "instructions": "run tests",
     }]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
 
     result = await p._execute(_goal_packet())
 
-    emitted.assert_awaited_once()
-    child: CXPPacket = emitted.await_args.args[0]
-    assert child.payload.goal == "first point second point"
-    assert "Spawned 1 sub-packets" in result
+    emitted.assert_awaited()
+    first_child: CXPPacket = emitted.await_args_list[0].args[0]
+    assert first_child.payload.goal == "first point second point"
+    assert "Spawned 2 sub-packets" in result
 
 
 async def test_trailing_comma_in_an_otherwise_valid_decomposition_no_longer_fails(monkeypatch):
@@ -207,13 +263,20 @@ async def test_trailing_comma_in_an_otherwise_valid_decomposition_no_longer_fail
         "instructions": "do it",
         "priority": 3,
     },
+    {
+        "type": "verify",
+        "capability": "verify",
+        "goal": "validate output",
+        "instructions": "run tests",
+        "priority": 3,
+    },
 ]"""
     p, emitted = await _planner(monkeypatch, raw)
 
     result = await p._execute(_goal_packet())
 
-    emitted.assert_awaited_once()
-    assert "Spawned 1 sub-packets" in result
+    assert emitted.await_count == 2
+    assert "Spawned 2 sub-packets" in result
 
 
 async def test_type_is_derived_from_the_validated_capability_not_trusted_raw(monkeypatch):
@@ -228,13 +291,16 @@ async def test_type_is_derived_from_the_validated_capability_not_trusted_raw(mon
     # decide a task produced an artifact -- a type="verify" packet is
     # invisible to that check forever, so the task times out even though
     # the swarm already finished it successfully.
-    sub_tasks = [{"type": "verify", "capability": "code", "goal": "write a function", "instructions": "do it"}]
+    sub_tasks = [
+        {"type": "verify", "capability": "code", "goal": "write a function", "instructions": "do it"},
+        {"type": "verify", "capability": "verify", "goal": "validate output", "instructions": "run tests"},
+    ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
 
     await p._execute(_goal_packet())
 
-    emitted.assert_awaited_once()
-    child: CXPPacket = emitted.await_args.args[0]
+    emitted.assert_awaited()
+    child: CXPPacket = emitted.await_args_list[0].args[0]
     assert child.capability == "code"
     assert child.type == PacketType.CODE  # derived from capability, not the model's raw "type"
 
@@ -249,6 +315,7 @@ async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
     sub_tasks = [
         {"type": "code", "capability": "code", "priority": "not-a-number", "goal": "bad", "instructions": "x"},
         {"type": "code", "capability": "code", "goal": "good one", "instructions": "y"},
+        {"type": "verify", "capability": "verify", "goal": "validate output", "instructions": "run tests"},
     ]
     p, emitted = await _planner(monkeypatch, json.dumps(sub_tasks))
     validation_failure = AsyncMock()
@@ -256,8 +323,6 @@ async def test_one_malformed_subtask_does_not_kill_the_rest(monkeypatch):
 
     result = await p._execute(_goal_packet())
 
-    emitted.assert_awaited_once()
-    child: CXPPacket = emitted.await_args.args[0]
-    assert child.payload.goal == "good one"
-    assert "Spawned 1 sub-packets" in result
-    validation_failure.assert_awaited_once()
+    emitted.assert_awaited()
+    assert "Spawned 2 sub-packets" in result
+    validation_failure.assert_awaited()
